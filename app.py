@@ -1,8 +1,8 @@
-
 from __future__ import annotations
 
 import hashlib
 import html
+import re
 import shutil
 import time
 from datetime import date, datetime
@@ -47,12 +47,9 @@ PASSWORD_LIST = APP_DIR / "jelszavak.txt"
 
 DEVICE_MODEL = "demo-device"
 
-# A bemutató lépései legalább öt másodpercig láthatók.
-STEP_SECONDS = 10
-
-# Az automatikus próba a teljes jelszavak.txt fájlt vizsgálja.
-# Ez a korlát csak az utána következő kiegészítő jelöltekre érvényes.
-AUTO_ATTACK_MAX_EXTRA_GUESSES = 120
+# Az automatikus próba összesen legfeljebb ennyi jelöltet vizsgál:
+# előbb a jelszavak.txt első sorait, a maradék helyet kiegészítő jelöltek töltik ki.
+AUTO_ATTACK_MAX_GUESSES = 200
 AUTO_ATTACK_DELAY_SECONDS = 0.015
 
 # A külön feltölthető szólista-audit korlátai.
@@ -99,166 +96,166 @@ ATTACK_SCENARIOS = [
     {
         "title": "Firmware-adatok módosítása",
         "text": (
-            "Az engedélyezett biztonsági teszt során módosítanak egy bájtot a firmware-ben; "
-            "az újraszámított SHA-256-lenyomat nem egyezik a manifestben rögzített értékkel, "
-            "ezért a készülék elutasítja a csomagot."
+            "A tesztelő módosít egy bájtot a firmware-ben. Az újraszámított "
+            "SHA-256-lenyomat eltér a manifestben rögzítettől, ezért az eszköz "
+            "elutasítja a csomagot."
         ),
     },
     {
         "title": "Verzióadat módosítása",
         "text": (
-            "A teszt során átírják a manifest verzióadatát; az aláírás ellenőrzése sikertelen lesz, "
-            "ezért a készülék elutasítja a csomagot."
+            "A tesztelő átírja a manifest verzióadatát. Az aláírás ellenőrzése "
+            "így sikertelen, ezért az eszköz elutasítja a csomagot."
         ),
     },
     {
         "title": "Aláírás idegen kulccsal",
         "text": (
-            "A tesztelő idegen privát kulccsal írja alá a csomagot; "
-            "a készülék megbízható gyártói publikus kulcsa nem igazolja az aláírást, "
-            "ezért a csomagot elutasítja."
+            "A tesztelő idegen privát kulccsal írja alá a csomagot. Az eszköz "
+            "megbízható gyártói publikus kulcsa nem igazolja az aláírást, "
+            "ezért az eszköz elutasítja a csomagot."
         ),
     },
     {
         "title": "Régebbi kiadás visszatelepítése",
         "text": (
-            "A tesztelő egy korábban érvényesen aláírt, de a készüléken telepítettnél régebbi "
-            "firmware-t próbál telepíteni; a verzió-visszalépés elleni védelem elutasítja."
+            "A tesztelő egy korábban érvényesen aláírt, de a telepítettnél "
+            "régebbi firmware-t próbál telepíteni. A visszalépés elleni "
+            "védelem elutasítja a csomagot."
         ),
     },
     {
         "title": "Aláírás eltávolítása",
         "text": (
-            "A tesztelő eltávolítja a digitális aláírást a csomagból; "
-            "aláírás nélkül a készülék nem tudja hitelesíteni a kiadást, ezért elutasítja."
+            "A tesztelő eltávolítja a digitális aláírást a csomagból. "
+            "Aláírás nélkül az eszköz nem tudja hitelesíteni a kiadást, "
+            "ezért elutasítja."
         ),
     },
 ]
 
 
-
-VERIFY_EXPLANATIONS = {
-    1: {
-        "title": "1/5 — Digitális aláírás",
-        "what": (
-            "Az eszköz a megbízható publikus kulccsal ellenőrzi a manifest aláírását."
-        ),
-        "why": (
-            "Az érvényes aláírás igazolja, hogy az aláírt adatok a megfelelő "
-            "privát kulccsal készültek, és azóta nem változtak meg."
-        ),
-    },
-    2: {
-        "title": "2/5 — Csomagformátum és mezők",
-        "what": (
-            "A csomagfeldolgozó ellenőrzi a formátumot és a kötelező manifestmezőket."
-        ),
-        "why": (
-            "Hiányos vagy nem értelmezhető csomagból az eszköz nem tud "
-            "megbízható telepítési adatokat kinyerni."
-        ),
-    },
-    3: {
-        "title": "3/5 — Célmodell",
-        "what": (
-            "Az eszköz összeveti a manifest modellazonosítóját a saját modellazonosítójával."
-        ),
-        "why": (
-            "A másik eszközmodellhez vagy termékcsaládhoz készült firmware "
-            "nem telepíthető erre az eszközre."
-        ),
-    },
-    4: {
-        "title": "4/5 — Firmware mérete és SHA-256-lenyomata",
-        "what": (
-            "Az eszköz ellenőrzi a firmware bájtméretét, majd újraszámítja "
-            "a fájl SHA-256-lenyomatát, és összeveti a manifestben szereplő értékekkel."
-        ),
-        "why": (
-            "A méret- vagy lenyomateltérés sérülésre, fájlcserére "
-            "vagy tartalommódosításra utal."
-        ),
-    },
-    5: {
-        "title": "5/5 — Verzió és visszalépés",
-        "what": (
-            "Az eszköz összeveti a csomag verzióját a helyben nyilvántartott "
-            "telepített verzióval."
-        ),
-        "why": (
-            "A régebbi verzióra történő visszaállítás visszahozhat már javított "
-            "hibákat, ezért azt az eszköz elutasítja."
-        ),
-    },
-}
-
+# A "what" mondatrészek állítmánnyal kezdődnek; a szereplő ("Az eszköz")
+# automatikusan előkerül a mondat elejére.
 VERIFY_EXPLANATIONS = {
     1: {
         "title": "1/5 — Gyártói aláírás",
         "what": (
-            "Az eszköz ellenőrzi, hogy a csomagot a megbízható gyártói "
-            "kulccsal írták-e alá, és az aláírt adatok azóta nem változtak-e meg."
+            "a megbízható gyártói kulccsal ellenőrzi, hogy a csomagot a gyártó "
+            "írta-e alá, és az aláírt adatok azóta nem változtak-e meg."
         ),
-        "why": (
-            "Így az eszköz felismeri az ismeretlen eredetű vagy "
-            "utólag módosított csomagot."
-        ),
+        "why": "Így felismeri az ismeretlen eredetű vagy utólag módosított csomagot.",
     },
     2: {
         "title": "2/5 — A csomag felépítése",
         "what": (
-            "Az eszköz ellenőrzi, hogy a csomag megfelelően van-e összeállítva, "
-            "és minden szükséges adat megtalálható-e benne."
+            "ellenőrzi, hogy a csomag felépítése megfelelő-e, és tartalmazza-e "
+            "az összes kötelező adatot."
         ),
-        "why": "A hibás vagy hiányos csomagot nem biztonságos telepíteni.",
+        "why": "Hibás vagy hiányos csomagot nem biztonságos telepíteni.",
     },
     3: {
         "title": "3/5 — A megfelelő eszközmodell",
-        "what": (
-            "Az eszköz ellenőrzi, hogy a firmware az ő pontos modelljéhez készült-e."
-        ),
-        "why": "Másik modellhez készült firmware-t nem enged telepíteni.",
+        "what": "ellenőrzi, hogy a firmware pontosan az ő modelljéhez készült-e.",
+        "why": "Másik modellhez készült firmware-t nem telepít.",
     },
     4: {
         "title": "4/5 — A firmware-fájl épsége",
         "what": (
-            "Az eszköz összehasonlítja a firmware méretét és digitális "
-            "lenyomatát a csomagban megadott értékekkel."
+            "összeveti a firmware méretét és SHA-256-lenyomatát a csomagban "
+            "megadott értékekkel."
         ),
         "why": (
             "Ha a fájl megsérült vagy módosították, az értékek nem egyeznek, "
-            "ezért az eszköz elutasítja."
+            "ezért a csomagot elutasítja."
         ),
     },
     5: {
         "title": "5/5 — A firmware verziója",
-        "what": (
-            "Az eszköz összehasonlítja a csomag verzióját a jelenleg telepített "
-            "verzióval."
-        ),
-        "why": (
-            "Csak újabb verziót enged telepíteni, így nem lehet régebbi "
-            "firmware-re visszalépni."
-        ),
+        "what": "összeveti a csomag verzióját a jelenleg telepített verzióval.",
+        "why": "Csak újabb verziót telepít, így régebbi firmware-re nem lehet visszalépni.",
     },
 }
+
+
 # ---------------------------------------------------------------------
 # Frontend
 # ---------------------------------------------------------------------
 
+ICONS = {
+    "factory": '<path d="M2 20a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8l-7 5V8l-7 5V4a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2Z"/><path d="M17 18h1"/><path d="M12 18h1"/><path d="M7 18h1"/>',
+    "cloud": '<path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z"/>',
+    "chip": '<rect width="16" height="16" x="4" y="4" rx="2"/><rect width="6" height="6" x="9" y="9" rx="1"/><path d="M15 2v2"/><path d="M15 20v2"/><path d="M2 15h2"/><path d="M2 9h2"/><path d="M20 15h2"/><path d="M20 9h2"/><path d="M9 2v2"/><path d="M9 20v2"/>',
+    "key": '<path d="M2.586 17.414A2 2 0 0 0 2 18.828V21a1 1 0 0 0 1 1h3a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h1a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h.172a2 2 0 0 0 1.414-.586l.814-.814a6.5 6.5 0 1 0-4-4z"/><circle cx="16.5" cy="7.5" r=".5" fill="currentColor"/>',
+    "box": '<path d="M11 21.73a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73z"/><path d="M12 22V12"/><path d="m3.3 7 8.7 5 8.7-5"/>',
+    "shield": '<path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/>',
+    "check": '<path d="M20 6 9 17l-5-5"/>',
+    "check-circle": '<circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/>',
+    "x-circle": '<circle cx="12" cy="12" r="10"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/>',
+    "bug": '<path d="m8 2 1.88 1.88"/><path d="M14.12 3.88 16 2"/><path d="M9 7.13v-1a3.003 3.003 0 1 1 6 0v1"/><path d="M12 20c-3.3 0-6-2.7-6-6v-3a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v3c0 3.3-2.7 6-6 6"/><path d="M12 20v-9"/><path d="M6.53 9C4.6 8.8 3 7.1 3 5"/><path d="M6 13H2"/><path d="M3 21c0-2.1 1.7-3.9 3.8-4"/><path d="M20.97 5c0 2.1-1.6 3.8-3.5 4"/><path d="M22 13h-4"/><path d="M17.2 17c2.1.1 3.8 1.9 3.8 4"/>',
+}
+
+
+def icon(name: str, size: int = 18) -> str:
+    return (
+        f'<svg class="ic" width="{size}" height="{size}" viewBox="0 0 24 24" '
+        'fill="none" stroke="currentColor" stroke-width="1.8" '
+        'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+        f"{ICONS[name]}</svg>"
+    )
+
+
+STEP_GROUPS = [
+    (
+        "Gyártó",
+        [
+            (1, "Build és tesztelés"),
+            (2, "Aláírókulcs"),
+            (3, "Manifest és aláírás"),
+            (4, "Közzététel"),
+        ],
+    ),
+    (
+        "Eszköz",
+        [
+            (5, "Letöltés"),
+            (6, "Bootloader"),
+            (7, "Csomagellenőrzés"),
+            (8, "Telepítés"),
+        ],
+    ),
+    (
+        "Támadási próbák",
+        [
+            (9, "Módosított csomagok"),
+            (10, "Kulcsjelszó-próba"),
+        ],
+    ),
+    ("Eredmény", [(11, "Összesítés")]),
+]
+
+STEP_GROUP_OF = {
+    number: group for group, items in STEP_GROUPS for number, _ in items
+}
+
+
 APP_CSS = """
 :root {
     color-scheme: dark;
-    --bg: #070b13;
-    --panel: #0e1622;
-    --panel-2: #111d2b;
-    --line: rgba(159, 185, 213, .16);
-    --text: #ecf3fb;
-    --muted: #98a9bc;
-    --cyan: #67e8f9;
-    --green: #6ee7b7;
-    --red: #fda4af;
-    --gold: #fbbf24;
+    --bg: #070c12;
+    --panel: #0b121a;
+    --panel-2: #0f1822;
+    --line: #1b2733;
+    --line-2: #263445;
+    --text: #e8eff7;
+    --muted: #8a9bad;
+    --dim: #5d6e80;
+    --cyan: #5dd6e8;
+    --cyan-soft: rgba(93, 214, 232, .12);
+    --green: #4ade9b;
+    --red: #fb7185;
+    --amber: #fbbf24;
+    --mono: ui-monospace, "JetBrains Mono", Consolas, monospace;
 }
 
 html, body, [class*="css"] {
@@ -266,502 +263,514 @@ html, body, [class*="css"] {
 }
 
 .stApp {
+    background: var(--bg);
     color: var(--text);
-    background:
-        radial-gradient(ellipse at 8% -5%, rgba(22, 129, 160, .18), transparent 36rem),
-        radial-gradient(ellipse at 92% 3%, rgba(112, 76, 201, .15), transparent 34rem),
-        linear-gradient(180deg, #070b13 0%, #091321 55%, #070c14 100%);
 }
 
-[data-testid="stHeader"] {
-    background: rgba(7, 11, 19, .78);
+header[data-testid="stHeader"],
+[data-testid="stToolbar"],
+[data-testid="stDecoration"],
+#MainMenu,
+footer {
+    display: none !important;
 }
 
 main .block-container {
     width: 100%;
     max-width: none !important;
-    padding: .9rem clamp(1rem, 2vw, 2.2rem) 2rem;
+    padding: 1rem clamp(1rem, 2vw, 2.4rem) 1.6rem;
 }
 
-[data-testid="stMarkdownContainer"] p {
-    color: var(--muted);
-    line-height: 1.55;
+.ic {
+    flex: 0 0 auto;
+    vertical-align: middle;
 }
+
+/* Widgetek */
 
 [data-testid="stWidgetLabel"] p {
-    color: #dbe7f4 !important;
-    font-weight: 650;
+    color: var(--muted) !important;
+    font-size: 12px;
+    font-weight: 500;
 }
 
 [data-testid="stForm"] {
-    padding: 1rem 1.15rem .8rem;
+    padding: .9rem 1rem .7rem;
     border: 1px solid var(--line);
-    border-radius: 18px;
-    background: linear-gradient(145deg, rgba(16, 29, 44, .94), rgba(10, 18, 29, .94));
-    box-shadow: 0 16px 40px rgba(0, 0, 0, .18);
+    border-radius: 14px;
+    background: var(--panel);
 }
 
 [data-testid="stFileUploaderDropzone"] {
-    border: 1px dashed rgba(135, 169, 203, .38);
-    border-radius: 12px;
-    background: rgba(5, 12, 21, .48);
+    padding: .5rem .8rem;
+    border: 1px dashed var(--line-2);
+    border-radius: 10px;
+    background: transparent;
 }
 
-.stTextInput input,
-.stNumberInput input {
-    border-color: rgba(148, 163, 184, .24);
+.stTextInput [data-baseweb="input"] {
+    border: 1px solid var(--line-2);
     border-radius: 10px;
-    background: rgba(5, 12, 21, .66);
+    background: var(--panel-2);
 }
 
 .stButton > button,
-[data-testid="stFormSubmitButton"] button {
+[data-testid="stFormSubmitButton"] button,
+[data-testid="stPopover"] button {
     min-height: 2.7rem;
-    border: 1px solid rgba(148, 163, 184, .2);
-    border-radius: 11px;
-    font-weight: 750;
-    transition: transform .16s ease, box-shadow .16s ease, border-color .16s ease;
+    border: 1px solid var(--line-2);
+    border-radius: 10px;
+    background: transparent;
+    color: var(--text);
+    font-weight: 600;
+    transition: border-color .15s ease, color .15s ease;
 }
 
 .stButton > button:hover,
-[data-testid="stFormSubmitButton"] button:hover {
-    transform: translateY(-1px);
-    border-color: rgba(103, 232, 249, .55);
-    box-shadow: 0 8px 22px rgba(0, 0, 0, .22);
+[data-testid="stFormSubmitButton"] button:hover,
+[data-testid="stPopover"] button:hover {
+    border-color: var(--cyan);
+    color: var(--cyan);
 }
 
-[data-testid="stFormSubmitButton"] button[kind="primary"],
 .stButton > button[kind="primary"],
-.stButton > button[data-testid="stBaseButton-primary"] {
+.stButton > button[data-testid="stBaseButton-primary"],
+[data-testid="stFormSubmitButton"] button[kind="primary"],
+[data-testid="stFormSubmitButton"] button[kind="primaryFormSubmit"],
+[data-testid="stFormSubmitButton"] button[data-testid="stBaseButton-primaryFormSubmit"] {
     border: 0;
-    background: linear-gradient(100deg, #67e8f9, #a5b4fc);
-    color: #07111b;
+    background: var(--cyan);
+    color: #06121a;
+}
+
+.stButton > button[kind="primary"]:hover,
+[data-testid="stFormSubmitButton"] button[kind="primary"]:hover,
+[data-testid="stFormSubmitButton"] button[kind="primaryFormSubmit"]:hover {
+    background: #7be3f1;
+    color: #06121a;
+}
+
+.stButton > button:disabled {
+    opacity: .35;
+}
+
+.btn-spacer {
+    height: 1.55rem;
 }
 
 /* Fejléc */
 
-.hero {
+.brand {
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    gap: 24px;
-    margin-bottom: 1rem;
-    padding: clamp(1.2rem, 2.4vw, 2rem);
-    border: 1px solid rgba(142, 181, 215, .19);
-    border-radius: 22px;
-    background:
-        radial-gradient(circle at 82% 14%, rgba(103, 232, 249, .12), transparent 24rem),
-        linear-gradient(120deg, rgba(17, 34, 52, .98), rgba(8, 17, 28, .98));
-    box-shadow: 0 18px 55px rgba(0, 0, 0, .22);
+    gap: 14px;
 }
 
-.hero-copy {
-    min-width: 0;
-}
-
-.hero-kicker,
-.section-kicker {
-    color: #91a9c0;
-    font-size: 10px;
-    font-weight: 850;
-    letter-spacing: .16em;
-    text-transform: uppercase;
-}
-
-.hero h1 {
-    margin: .45rem 0 .35rem;
-    color: #f4f8ff;
-    font-size: clamp(2rem, 4vw, 3.2rem);
-    font-weight: 850;
-    letter-spacing: -.055em;
-    line-height: 1.04;
-}
-
-.hero p {
-    max-width: 760px;
-    margin: 0;
-    color: #b0c0d2;
-    font-size: 14px;
-}
-
-.hero-side {
-    flex: 0 0 auto;
+.brand-icon {
     display: grid;
-    gap: 9px;
-    min-width: 190px;
-    padding: 13px 15px;
-    border: 1px solid rgba(103, 232, 249, .18);
-    border-radius: 14px;
-    background: rgba(5, 14, 23, .55);
+    width: 44px;
+    height: 44px;
+    place-items: center;
+    border: 1px solid #1b4452;
+    border-radius: 12px;
+    background: #0e2830;
+    color: var(--cyan);
 }
 
-.hero-chip {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    color: #d5e1ed;
-    font-size: 10px;
-    font-weight: 750;
-    letter-spacing: .04em;
-}
-
-.hero-chip-dot {
-    width: 7px;
-    height: 7px;
-    border-radius: 50%;
-    background: #6ee7b7;
-    box-shadow: 0 0 12px rgba(110, 231, 183, .75);
-}
-
-/* Panelek és címek */
-
-.section-heading {
-    display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    gap: 12px;
-    margin: .3rem 0 .65rem;
-}
-
-.section-heading h2 {
+.brand h1 {
     margin: 0;
-    color: #eaf2fa;
-    font-size: 16px;
-    font-weight: 800;
+    padding: 0;
+    color: var(--text);
+    font-size: 19px;
+    font-weight: 700;
+    letter-spacing: -.01em;
+    line-height: 1.25;
 }
 
-.section-hint {
-    color: #8194a8;
-    font-size: 10px;
+.brand-sub {
+    margin-top: 2px;
+    color: var(--muted);
+    font-size: 13px;
 }
 
-.panel-heading {
+.meta {
     display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 10px;
-    margin: .3rem 0 .65rem;
+    justify-content: flex-end;
+    gap: 22px;
+    padding-top: 14px;
+    color: var(--dim);
+    font: 12px var(--mono);
 }
 
-.panel-heading strong {
-    color: #e6eef7;
-    font-size: 14px;
-    font-weight: 800;
+.meta b {
+    margin-left: 6px;
+    color: var(--text);
+    font-weight: 600;
 }
 
-.panel-live {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    color: #75e4bc;
-    font-size: 9px;
-    font-weight: 800;
-    letter-spacing: .1em;
+/* Bal oldali lépéslista */
+
+.stepper {
+    padding: .2rem 0;
 }
 
-.panel-live::before {
-    width: 7px;
-    height: 7px;
-    border-radius: 50%;
-    background: #34d399;
-    box-shadow: 0 0 10px rgba(52, 211, 153, .8);
+.step-group {
+    margin: 1rem 0 .35rem;
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.step-group:first-child {
+    margin-top: 0;
+}
+
+.step {
+    position: relative;
+    padding: 3px 0 9px;
+}
+
+.step:not(.last)::before {
+    position: absolute;
+    top: 28px;
+    bottom: -1px;
+    left: 11px;
+    width: 1px;
+    background: var(--line-2);
     content: "";
 }
 
-/* Animált jelenet */
-
-.storyboard {
-    margin: .35rem 0 .7rem;
-    padding: clamp(.9rem, 1.5vw, 1.3rem);
-    border: 1px solid rgba(103, 232, 249, .25);
-    border-radius: 18px;
-    background:
-        radial-gradient(circle at 5% 0%, rgba(34, 211, 238, .085), transparent 26rem),
-        linear-gradient(145deg, rgba(14, 27, 42, .98), rgba(7, 14, 23, .98));
-    box-shadow: 0 16px 42px rgba(0, 0, 0, .23);
+.step.done:not(.last)::before {
+    background: rgba(74, 222, 155, .35);
 }
 
-.storyboard.stage-attacker,
-.storyboard.stage-bruteforce,
-.storyboard.stage-bruteforce-success {
-    border-color: rgba(251, 113, 133, .42);
-    background:
-        radial-gradient(circle at 90% 0%, rgba(251, 113, 133, .09), transparent 24rem),
-        linear-gradient(145deg, #17131d, #0a1019);
-}
-
-.storyboard.stage-done {
-    border-color: rgba(52, 211, 153, .4);
-}
-
-.storyboard.stage-error {
-    border-color: rgba(251, 113, 133, .5);
-}
-
-.network-header {
+.step-row {
     display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
+    align-items: center;
     gap: 12px;
-    margin-bottom: 11px;
 }
 
-.network-kicker {
-    color: #91a8bd;
-    font-size: 9px;
-    font-weight: 850;
-    letter-spacing: .15em;
-}
-
-.network-title {
-    margin-top: 4px;
-    color: #f2f7ff;
-    font-size: clamp(17px, 1.55vw, 23px);
-    font-weight: 820;
-    line-height: 1.2;
-}
-
-.network-status {
+.step-dot {
+    display: grid;
+    width: 24px;
+    height: 24px;
     flex: 0 0 auto;
-    padding: 6px 9px;
-    border: 1px solid rgba(103, 232, 249, .3);
-    border-radius: 20px;
-    background: rgba(103, 232, 249, .075);
-    color: #a5f3fc;
-    font-size: 8px;
-    font-weight: 850;
-    letter-spacing: .08em;
+    place-items: center;
+    border: 1px solid var(--line-2);
+    border-radius: 50%;
+    background: var(--bg);
+    color: var(--dim);
+    font-size: 11px;
+    font-weight: 600;
 }
 
-.stage-attacker .network-status,
-.stage-bruteforce .network-status,
-.stage-bruteforce-success .network-status,
-.stage-bruteforce-failed .network-status {
-    border-color: rgba(251, 113, 133, .4);
-    background: rgba(251, 113, 133, .08);
-    color: #fda4af;
+.step-label {
+    color: var(--dim);
+    font-size: 14px;
+}
+
+.step.done .step-dot {
+    border-color: rgba(74, 222, 155, .55);
+    background: rgba(74, 222, 155, .08);
+    color: var(--green);
+}
+
+.step.done .step-label {
+    color: var(--text);
+}
+
+.step.active .step-dot {
+    border-color: var(--cyan);
+    background: var(--cyan);
+    color: #06121a;
+}
+
+.step.active .step-label {
+    color: #fff;
+    font-weight: 700;
+}
+
+.step-segs {
+    display: flex;
+    gap: 4px;
+    margin: 8px 0 0 36px;
+}
+
+.step-segs span {
+    height: 3px;
+    flex: 1;
+    border-radius: 3px;
+    background: var(--line-2);
+}
+
+.step-segs span.on {
+    background: var(--cyan);
+}
+
+/* Jelenet */
+
+.network-card {
+    padding: 12px 14px 14px;
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    background: var(--panel);
+}
+
+.network-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 10px;
+    color: var(--muted);
+    font-size: 12px;
+}
+
+.status-pill {
+    padding: 4px 13px;
+    border: 1px solid rgba(93, 214, 232, .28);
+    border-radius: 999px;
+    background: var(--cyan-soft);
+    color: var(--cyan);
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.status-pill.bad {
+    border-color: rgba(251, 113, 133, .35);
+    background: rgba(251, 113, 133, .1);
+    color: var(--red);
 }
 
 .network-scene {
     position: relative;
-    height: clamp(230px, 31vh, 350px);
+    height: 190px;
     overflow: hidden;
-    border: 1px solid rgba(103, 232, 249, .18);
-    border-radius: 15px;
-    background:
-        radial-gradient(circle at 50% 48%, rgba(34, 211, 238, .11), transparent 36%),
-        linear-gradient(135deg, #091421, #101d2d);
 }
 
-.network-scene::before {
+.storyboard.stage-attacker .network-scene,
+.storyboard.stage-bruteforce .network-scene,
+.storyboard.stage-bruteforce-success .network-scene,
+.storyboard.stage-bruteforce-failed .network-scene {
+    height: 232px;
+}
+
+.pkg-chip {
     position: absolute;
-    inset: 0;
-    background-image: radial-gradient(rgba(148, 163, 184, .17) .7px, transparent .7px);
-    background-size: 20px 20px;
-    opacity: .18;
-    content: "";
-    pointer-events: none;
+    z-index: 6;
+    top: 0;
+    right: 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 5px 11px;
+    border: 1px solid var(--line-2);
+    border-radius: 9px;
+    background: var(--panel-2);
+    color: var(--muted);
+    font-size: 12px;
+}
+
+.pkg-chip b {
+    color: var(--text);
+    font-weight: 600;
+}
+
+.pkg-state {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    color: var(--cyan);
+    font-weight: 600;
+}
+
+.pkg-state.bad {
+    color: var(--red);
 }
 
 .network-route {
     position: absolute;
     z-index: 1;
-    top: 50%;
-    right: 12%;
-    left: 12%;
-    height: 2px;
-    background: repeating-linear-gradient(
-        90deg,
-        rgba(103, 232, 249, .6) 0 8px,
-        transparent 8px 15px
-    );
-    animation: route-flow 1.2s linear infinite;
+    top: 114px;
+    right: 18%;
+    left: 18%;
+    height: 1px;
+    background: var(--line-2);
 }
 
 .scene-node {
     position: absolute;
     z-index: 2;
-    top: 50%;
-    display: grid;
-    width: 22%;
-    min-width: 86px;
-    min-height: 104px;
-    align-content: center;
-    justify-items: center;
-    gap: 5px;
-    padding: 8px 5px;
-    transform: translateY(-50%);
-    border: 1px solid rgba(148, 163, 184, .2);
+    top: 48px;
+    display: flex;
+    width: 30%;
+    height: 132px;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
+    border: 1px solid var(--line);
     border-radius: 14px;
-    background: rgba(13, 25, 39, .96);
-    color: #b5c2d0;
-    opacity: .58;
+    background: var(--panel-2);
+    color: var(--dim);
     text-align: center;
-    transition: border-color .25s ease, opacity .25s ease, box-shadow .25s ease;
+    transition: border-color .25s ease, color .25s ease;
 }
 
-.scene-node.factory {
-    left: 2.5%;
-}
+.scene-node.factory { left: 3%; }
+.scene-node.cloud { left: 35%; }
+.scene-node.device { right: 3%; }
 
-.scene-node.cloud {
-    left: 39%;
-}
-
-.scene-node.device {
-    right: 2.5%;
-}
-
-.scene-node.active {
-    border-color: rgba(103, 232, 249, .68);
-    background: rgba(17, 37, 55, .98);
-    color: #f3f7ff;
-    opacity: 1;
-    box-shadow: 0 0 22px rgba(103, 232, 249, .08);
-}
-
-.scene-node.cloud.active {
-    border-color: rgba(167, 139, 250, .7);
-    box-shadow: 0 0 24px rgba(167, 139, 250, .1);
-}
-
-.scene-node.device.active {
-    border-color: rgba(52, 211, 153, .6);
-    box-shadow: 0 0 24px rgba(52, 211, 153, .1);
-}
-
-.scene-icon {
-    font-size: 30px;
-    line-height: 1;
+.scene-ic {
+    display: grid;
+    width: 44px;
+    height: 44px;
+    margin-bottom: 5px;
+    place-items: center;
+    border-radius: 12px;
+    background: #111c27;
 }
 
 .scene-node strong {
-    color: #eef5fb;
-    font-size: 10px;
-    font-weight: 850;
-    letter-spacing: .06em;
+    font-size: 15px;
+    font-weight: 700;
 }
 
 .scene-node small {
-    color: #9bacc0;
-    font-size: 9px;
+    font-size: 12px;
 }
 
-.node-badge {
-    position: absolute;
-    top: 5px;
-    right: 5px;
-    display: none;
-    place-items: center;
-    width: 22px;
-    height: 22px;
-    border: 1px solid rgba(148, 163, 184, .18);
-    border-radius: 50%;
-    background: #102638;
-    font-size: 13px;
+.scene-node.active {
+    color: var(--text);
 }
 
-.stage-checking .node-badge.shield,
-.stage-attacker .node-badge.shield {
-    display: grid;
+.scene-node.active small {
+    color: var(--muted);
 }
 
-.stage-accepted .node-badge.accepted,
-.stage-bruteforce-success .node-badge.breached {
-    display: grid;
+.scene-node.factory.active {
+    border-color: rgba(93, 214, 232, .6);
+}
+
+.scene-node.factory.active .scene-ic {
+    background: rgba(93, 214, 232, .12);
+    color: var(--cyan);
+}
+
+.scene-node.cloud.active {
+    border-color: rgba(167, 139, 250, .6);
+}
+
+.scene-node.cloud.active .scene-ic {
+    background: rgba(167, 139, 250, .12);
+    color: #a78bfa;
+}
+
+.scene-node.device.active {
+    border-color: rgba(74, 222, 155, .6);
+}
+
+.scene-node.device.active .scene-ic {
+    background: rgba(74, 222, 155, .12);
+    color: var(--green);
+}
+
+.stage-bruteforce .scene-node.device.active,
+.stage-bruteforce-success .scene-node.device.active,
+.stage-bruteforce-failed .scene-node.device.active {
+    border-color: rgba(251, 113, 133, .6);
+}
+
+.stage-bruteforce .scene-node.device.active .scene-ic,
+.stage-bruteforce-success .scene-node.device.active .scene-ic,
+.stage-bruteforce-failed .scene-node.device.active .scene-ic {
+    background: rgba(251, 113, 133, .12);
+    color: var(--red);
 }
 
 .moving-package,
 .attack-packet {
     position: absolute;
     z-index: 5;
+    top: 95px;
+    left: 18%;
     display: none;
-    place-items: center;
     width: 38px;
     height: 38px;
-    border: 1px solid rgba(103, 232, 249, .68);
-    border-radius: 11px;
-    background: #10263b;
-    box-shadow: 0 0 20px rgba(103, 232, 249, .2);
-    font-size: 20px;
+    margin-left: -19px;
+    place-items: center;
+    border: 1px solid rgba(93, 214, 232, .6);
+    border-radius: 10px;
+    background: #0e2430;
+    color: var(--cyan);
+}
+
+.attack-packet {
+    border-color: rgba(251, 113, 133, .7);
+    background: #2a1620;
+    color: var(--red);
 }
 
 .stage-delivery .moving-package {
-    top: calc(50% - 19px);
-    left: calc(13% - 19px);
     display: grid;
     animation: package-ready .8s ease-in-out infinite alternate;
 }
 
 .stage-uploading .moving-package {
-    top: calc(50% - 19px);
     display: grid;
     animation: send-to-cloud 2.4s ease-in-out infinite;
 }
 
 .stage-downloading .moving-package {
-    top: calc(50% - 19px);
     display: grid;
     animation: send-to-device 2.4s ease-in-out infinite;
 }
 
 .stage-checking .moving-package,
 .stage-accepted .moving-package {
-    top: calc(50% - 19px);
-    left: calc(86% - 19px);
+    left: 82%;
     display: grid;
 }
 
-.signature-stamp {
-    position: absolute;
-    z-index: 5;
-    top: 7%;
-    left: 7%;
-    display: none;
-    padding: 7px 9px;
-    border: 1px solid rgba(103, 232, 249, .42);
-    border-radius: 9px;
-    background: #10253a;
-    color: #a5f3fc;
-    font-size: 9px;
-    font-weight: 850;
-    letter-spacing: .05em;
+.stage-attacker .attack-packet {
+    display: grid;
+    animation: attack-flight 1.8s ease-in-out infinite;
 }
 
-.stage-signing .signature-stamp {
-    display: flex;
-    animation: stamp-pop .7s ease-in-out infinite alternate;
+.stage-bruteforce .attack-packet {
+    display: grid;
+    animation: key-flight 1.4s ease-in-out infinite;
 }
 
 .stage-checking .scene-node.device::after {
     position: absolute;
-    z-index: 4;
     top: 0;
     bottom: 0;
-    left: -5px;
-    width: 5px;
-    border-radius: 5px;
-    background: #67e8f9;
-    box-shadow: 0 0 18px #67e8f9;
+    left: 0;
+    width: 2px;
+    border-radius: 2px;
+    background: var(--cyan);
+    box-shadow: 0 0 14px var(--cyan);
     content: "";
-    animation: scan-device 1.3s linear infinite;
+    animation: scan-device 1.6s linear infinite;
 }
 
 .attacker-figure {
     position: absolute;
     z-index: 4;
-    top: 78%;
-    left: 41%;
+    top: 196px;
+    left: 50%;
     display: none;
     align-items: center;
-    gap: 6px;
-    padding: 6px 9px;
+    gap: 7px;
+    padding: 5px 11px;
+    transform: translateX(-50%);
     border: 1px solid rgba(251, 113, 133, .4);
-    border-radius: 10px;
-    background: #25151f;
-    color: #fda4af;
-    font-size: 9px;
-    font-weight: 850;
+    border-radius: 9px;
+    background: #22131b;
+    color: var(--red);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: .06em;
 }
 
 .stage-attacker .attacker-figure,
@@ -769,108 +778,91 @@ main .block-container {
 .stage-bruteforce-success .attacker-figure,
 .stage-bruteforce-failed .attacker-figure {
     display: flex;
-    animation: attacker-pulse .7s ease-in-out infinite alternate;
 }
 
-.stage-attacker .attack-packet,
-.stage-bruteforce .attack-packet {
-    display: grid;
-    border-color: rgba(251, 113, 133, .78);
-    background: #321822;
-    box-shadow: 0 0 20px rgba(251, 113, 133, .22);
+/* Jelenet alatti szöveg */
+
+.scene-copy {
+    padding: 18px 2px 4px;
 }
 
-.stage-attacker .attack-packet {
-    animation: attack-flight 1.8s ease-in-out infinite;
+.scene-kicker {
+    color: var(--muted);
+    font: 12px var(--mono);
+    letter-spacing: .02em;
 }
 
-.stage-bruteforce .attack-packet {
-    animation: key-flight 1.4s ease-in-out infinite;
-}
-
-.stage-uploading .scene-node.factory,
-.stage-uploading .scene-node.cloud,
-.stage-downloading .scene-node.cloud,
-.stage-downloading .scene-node.device,
-.stage-checking .scene-node.device {
-    animation: node-glow 1s ease-in-out infinite alternate;
-}
-
-.stage-attacker .scene-node.device {
-    border-color: rgba(52, 211, 153, .58);
-}
-
-.stage-bruteforce .scene-node.device {
-    border-color: rgba(251, 113, 133, .58);
-}
-
-.scene-caption {
-    margin-top: 10px;
-    padding: 11px 13px;
-    border: 1px solid rgba(148, 163, 184, .14);
-    border-radius: 12px;
-    background: rgba(255, 255, 255, .025);
-}
-
-.scene-action-label {
-    color: #8da3b9;
-    font-size: 9px;
-    font-weight: 850;
-    letter-spacing: .12em;
+.scene-title {
+    margin: 6px 0 14px;
+    color: #fff;
+    font-size: 27px;
+    font-weight: 700;
+    letter-spacing: -.02em;
+    line-height: 1.2;
 }
 
 .scene-action {
-    margin-top: 5px;
-    color: #eef5fc;
-    font-size: clamp(14px, 1.2vw, 17px);
-    font-weight: 720;
-    line-height: 1.5;
-    overflow-wrap: anywhere;
+    color: #d3deea;
+    font-size: 16px;
+    line-height: 1.6;
 }
 
-.scene-importance {
-    margin-top: 7px;
-    color: #86efac;
-    font-size: 12px;
-    font-weight: 680;
-    line-height: 1.45;
+.scene-why {
+    margin-top: 16px;
+    padding: 2px 0 2px 16px;
+    border-left: 2px solid var(--line-2);
+}
+
+.scene-why-label {
+    color: var(--muted);
+    font-size: 13px;
+}
+
+.scene-why-text {
+    margin-top: 3px;
+    color: #d3deea;
+    font-size: 15px;
+    line-height: 1.55;
 }
 
 .scene-outcome {
-    margin-top: 9px;
-    padding: 8px 10px;
-    border-left: 3px solid;
-    border-radius: 7px;
-    font-size: 11px;
-    line-height: 1.45;
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 18px;
+    padding: 10px 16px;
+    border: 1px solid;
+    border-radius: 10px;
+    font-size: 14px;
+    font-weight: 600;
 }
 
 .scene-outcome.good {
-    border-color: #34d399;
-    background: rgba(52, 211, 153, .07);
-    color: #a7f3d0;
+    border-color: rgba(74, 222, 155, .4);
+    background: rgba(74, 222, 155, .07);
+    color: var(--green);
 }
 
 .scene-outcome.bad {
-    border-color: #fb7185;
+    border-color: rgba(251, 113, 133, .4);
     background: rgba(251, 113, 133, .07);
-    color: #fecdd3;
+    color: var(--red);
 }
 
 /* Jelszópróba */
 
 .live-guess {
-    margin: 8px 0 14px;
-    padding: 11px 13px;
+    margin: 4px 0 6px;
+    padding: 11px 14px;
     border: 1px solid rgba(251, 113, 133, .35);
     border-radius: 12px;
-    background: rgba(48, 19, 29, .76);
+    background: rgba(48, 19, 29, .6);
 }
 
 .live-guess-label {
-    color: #fda4af;
-    font-size: 9px;
-    font-weight: 850;
+    color: var(--red);
+    font-size: 10px;
+    font-weight: 700;
     letter-spacing: .12em;
 }
 
@@ -884,22 +876,20 @@ main .block-container {
 
 .live-guess-value {
     color: #fff1f2;
-    font-size: 21px;
-    font-weight: 850;
+    font: 700 20px var(--mono);
     overflow-wrap: anywhere;
 }
 
 .live-guess-count {
-    flex: 0 0 auto;
     color: #cbd5e1;
-    font: 10px ui-monospace, Consolas, monospace;
+    font: 11px var(--mono);
 }
 
 .guess-progress {
-    height: 5px;
+    height: 4px;
     margin-top: 8px;
     overflow: hidden;
-    border-radius: 10px;
+    border-radius: 4px;
     background: rgba(255, 255, 255, .1);
 }
 
@@ -911,131 +901,124 @@ main .block-container {
     transition: width .12s linear;
 }
 
-/* Mindig látható, görgethető technikai napló */
+/* Léptető sor */
+
+.nav-rule {
+    height: 1px;
+    margin: 16px 0 14px;
+    background: var(--line);
+}
+
+.counter {
+    padding-top: .65rem;
+    color: var(--muted);
+    font: 13px var(--mono);
+    text-align: center;
+}
+
+/* Technikai napló */
 
 .terminal-window {
     display: flex;
+    height: 640px;
     flex-direction: column;
-    height: clamp(430px, calc(100vh - 340px), 720px);
     overflow: hidden;
-    border: 1px solid rgba(110, 231, 183, .23);
-    border-radius: 15px;
-    background: #050a10;
-    box-shadow: 0 16px 42px rgba(0, 0, 0, .25);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    background: var(--panel);
 }
 
 .terminal-topbar {
+    display: flex;
     flex: 0 0 auto;
-    display: flex;
     align-items: center;
-    gap: 10px;
-    padding: 11px 13px;
-    border-bottom: 1px solid rgba(148, 163, 184, .14);
-    background: #0c151d;
-    color: #a6b8c8;
-    font: 800 9px/1.2 ui-monospace, Consolas, monospace;
-    letter-spacing: .08em;
+    justify-content: space-between;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--line);
+    color: var(--text);
+    font-size: 13px;
 }
 
-.terminal-dots {
-    display: flex;
-    gap: 5px;
+.terminal-count {
+    color: var(--dim);
+    font: 11px var(--mono);
 }
-
-.terminal-dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-}
-
-.terminal-red { background: #fb7185; }
-.terminal-yellow { background: #fbbf24; }
-.terminal-green-dot { background: #34d399; }
 
 .terminal-body {
     display: flex;
-    flex: 1;
     min-height: 0;
+    flex: 1;
     flex-direction: column-reverse;
     overflow-y: auto;
-    padding: 10px 12px;
-    color: #cbd5e1;
-    font: 10px/1.65 ui-monospace, Consolas, monospace;
-    scrollbar-color: #314356 #080e15;
+    padding: 10px 14px;
+    font: 12px/1.65 var(--mono);
+    scrollbar-color: #314356 #0b121a;
 }
 
-.terminal-line {
-    display: block;
-    white-space: pre-wrap;
+.tl {
+    display: grid;
+    grid-template-columns: 62px 1fr;
+    gap: 10px;
+    padding: 1px 0;
+}
+
+.tl-time {
+    color: var(--dim);
+}
+
+.tl-body {
+    color: #c3cfdc;
     overflow-wrap: anywhere;
 }
 
-.log-normal { color: #cbd5e1; }
-.log-ok { color: #6ee7b7; }
-.log-warn { color: #fbbf24; }
-.log-error { color: #fda4af; }
-.log-attack { color: #fb7185; }
-
-/* Kiegészítő panelek */
-
-[data-testid="stExpander"] {
-    border: 1px solid rgba(148, 163, 184, .17);
-    border-radius: 13px;
-    background: rgba(255, 255, 255, .025);
+.tl-tag {
+    margin-right: 6px;
+    color: var(--muted);
 }
 
-.footer-note {
-    margin-top: 1.3rem;
-    padding-top: .8rem;
-    border-top: 1px solid rgba(148, 163, 184, .12);
-    color: #71839b;
-    font-size: 9px;
-    letter-spacing: .09em;
-    text-align: center;
-}
+.t-check { color: var(--cyan); }
+.t-ok { color: var(--green); }
+.t-err { color: var(--red); }
+.t-warn { color: var(--amber); }
+.t-att { color: var(--red); }
 
 /* Animációk */
 
 @keyframes send-to-cloud {
-    0%   { left: 13%; opacity: 0; transform: scale(.75); }
+    0%   { left: 18%; opacity: 0; transform: scale(.75); }
     12%  { opacity: 1; transform: scale(1); }
-    70%  { left: 49%; opacity: 1; }
-    86%  { left: 49%; opacity: 0; }
-    100% { left: 13%; opacity: 0; }
+    70%  { left: 50%; opacity: 1; }
+    86%  { left: 50%; opacity: 0; }
+    100% { left: 18%; opacity: 0; }
 }
 
 @keyframes send-to-device {
-    0%   { left: 49%; opacity: 0; transform: scale(.75); }
+    0%   { left: 50%; opacity: 0; transform: scale(.75); }
     12%  { opacity: 1; transform: scale(1); }
-    70%  { left: 85%; opacity: 1; }
-    86%  { left: 85%; opacity: 0; }
-    100% { left: 49%; opacity: 0; }
+    70%  { left: 82%; opacity: 1; }
+    86%  { left: 82%; opacity: 0; }
+    100% { left: 50%; opacity: 0; }
 }
 
 @keyframes attack-flight {
-    0%   { left: 50%; top: 76%; opacity: 0; transform: scale(.7); }
+    0%   { left: 50%; top: 196px; opacity: 0; transform: scale(.7); }
     12%  { opacity: 1; transform: scale(1); }
-    72%  { left: 80%; top: 47%; opacity: 1; }
-    86%  { left: 80%; top: 47%; opacity: 0; transform: scale(.6); }
-    100% { left: 50%; top: 76%; opacity: 0; }
+    72%  { left: 78%; top: 130px; opacity: 1; }
+    86%  { left: 78%; top: 130px; opacity: 0; transform: scale(.6); }
+    100% { left: 50%; top: 196px; opacity: 0; }
 }
 
 @keyframes key-flight {
-    0%   { left: 45%; top: 75%; opacity: 0; transform: scale(.7); }
+    0%   { left: 46%; top: 196px; opacity: 0; transform: scale(.7); }
     15%  { opacity: 1; transform: scale(1); }
-    72%  { left: 80%; top: 49%; opacity: 1; }
-    88%  { left: 80%; top: 49%; opacity: 0; transform: scale(.7); }
-    100% { left: 45%; top: 75%; opacity: 0; }
+    72%  { left: 78%; top: 130px; opacity: 1; }
+    88%  { left: 78%; top: 130px; opacity: 0; transform: scale(.7); }
+    100% { left: 46%; top: 196px; opacity: 0; }
 }
 
 @keyframes scan-device {
-    from { left: -5px; }
-    to   { left: calc(100% + 5px); }
-}
-
-@keyframes node-glow {
-    from { box-shadow: 0 0 0 rgba(103, 232, 249, 0); }
-    to   { box-shadow: 0 0 20px rgba(103, 232, 249, .22); }
+    from { left: 0; }
+    to   { left: calc(100% - 2px); }
 }
 
 @keyframes package-ready {
@@ -1043,73 +1026,14 @@ main .block-container {
     to   { transform: scale(1.08); }
 }
 
-@keyframes stamp-pop {
-    from { transform: scale(.88); }
-    to   { transform: scale(1.05); }
-}
-
-@keyframes attacker-pulse {
-    from { opacity: .65; }
-    to   { opacity: 1; }
-}
-
-@keyframes route-flow {
-    to { background-position: 15px 0; }
-}
-
 @media (max-width: 900px) {
-    .hero {
-        align-items: flex-start;
-    }
-
-    .hero-side {
-        min-width: 155px;
+    .meta {
+        justify-content: flex-start;
+        padding-top: 0;
     }
 
     .terminal-window {
-        height: 480px;
-    }
-}
-
-@media (max-width: 650px) {
-    main .block-container {
-        padding: .8rem .7rem 1.5rem;
-    }
-
-    .hero {
-        flex-direction: column;
-        padding: 1.2rem;
-    }
-
-    .hero-side {
-        width: 100%;
-    }
-
-    .network-scene {
-        height: 225px;
-    }
-
-    .scene-node {
-        width: 24%;
-        min-width: 70px;
-        min-height: 86px;
-        padding: 5px 3px;
-    }
-
-    .scene-node strong {
-        font-size: 8px;
-    }
-
-    .scene-node small {
-        font-size: 8px;
-    }
-
-    .scene-icon {
-        font-size: 24px;
-    }
-
-    .terminal-window {
-        height: 370px;
+        height: 460px;
     }
 }
 
@@ -1122,6 +1046,597 @@ main .block-container {
     }
 }
 """
+# Két azonos nevű kulcskép-készlet (-a / -b): a jelenetváltáskor a
+# névváltás miatt az animáció újraindul, akkor is, ha a DOM-elem megmarad.
+FX_TEMPLATE = """
+@keyframes rise-§ {
+    from { opacity: 0; transform: translateY(12px); }
+    to   { opacity: 1; transform: none; }
+}
+@keyframes pop-§ {
+    0%   { opacity: 0; transform: scale(.8); }
+    60%  { opacity: 1; transform: scale(1.06); }
+    100% { opacity: 1; transform: scale(1); }
+}
+@keyframes shake-§ {
+    0%   { opacity: 0; transform: translateX(0); }
+    15%  { opacity: 1; transform: translateX(-7px); }
+    35%  { transform: translateX(6px); }
+    55%  { transform: translateX(-4px); }
+    75%  { transform: translateX(3px); }
+    100% { opacity: 1; transform: none; }
+}
+@keyframes node-in-§ {
+    from { transform: scale(.93); }
+    to   { transform: scale(1); }
+}
+
+.fx-§ .scene-kicker  { animation: rise-§ .35s ease-out both; }
+.fx-§ .scene-title   { animation: rise-§ .45s .06s ease-out both; }
+.fx-§ .scene-action  { animation: rise-§ .50s .14s ease-out both; }
+.fx-§ .scene-why     { animation: rise-§ .50s .26s ease-out both; }
+.fx-§ .pkg-chip      { animation: rise-§ .40s ease-out both; }
+.fx-§ .scene-outcome.good { animation: pop-§ .55s .40s cubic-bezier(.2, .9, .3, 1.2) both; }
+.fx-§ .scene-outcome.bad  { animation: shake-§ .60s .40s ease-out both; }
+.fx-§ .scene-node.active  {
+    animation: node-in-§ .45s ease-out, breathe 3.2s .45s ease-in-out infinite;
+}
+"""
+
+FX_STATIC = """
+/* ---------- Közös kulcsképek ---------- */
+
+@keyframes breathe {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(var(--glow), 0); }
+    50%      { box-shadow: 0 0 26px 0 rgba(var(--glow), .22); }
+}
+@keyframes bob {
+    0%, 100% { transform: translateY(0); }
+    50%      { transform: translateY(-3px); }
+}
+@keyframes blink {
+    0%, 100% { opacity: 1; }
+    50%      { opacity: .2; }
+}
+@keyframes ring-out {
+    from { opacity: .85; transform: scale(1); }
+    to   { opacity: 0;   transform: scale(1.14); }
+}
+@keyframes impact {
+    0%, 68% { opacity: 0;   transform: scale(1); }
+    72%     { opacity: .95; transform: scale(1); }
+    100%    { opacity: 0;   transform: scale(1.16); }
+}
+
+/* ---------- Fejléc, kártya, státusz ---------- */
+
+@keyframes icon-glow {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(93, 214, 232, 0); }
+    50%      { box-shadow: 0 0 20px 0 rgba(93, 214, 232, .28); }
+}
+.brand-icon { animation: icon-glow 3.6s ease-in-out infinite; }
+
+@keyframes grid-drift { to { background-position: 28px 28px, 28px 28px; } }
+.network-card {
+    background-image:
+        linear-gradient(rgba(93, 214, 232, .035) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(93, 214, 232, .035) 1px, transparent 1px);
+    background-size: 28px 28px;
+    animation: grid-drift 14s linear infinite;
+}
+
+.status-pill::before {
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    margin-right: 8px;
+    vertical-align: middle;
+    border-radius: 50%;
+    background: currentColor;
+    content: "";
+    animation: blink 1.4s ease-in-out infinite;
+}
+
+/* ---------- Csomópontok színe ---------- */
+
+.scene-node.factory { --glow: 93, 214, 232; }
+.scene-node.cloud   { --glow: 167, 139, 250; }
+.scene-node.device  { --glow: 74, 222, 155; }
+.stage-bruteforce .scene-node.device,
+.stage-bruteforce-success .scene-node.device,
+.stage-error .scene-node.device { --glow: 251, 113, 133; }
+
+.scene-node.active .scene-ic { animation: bob 3s ease-in-out infinite; }
+
+/* ---------- Útvonal és csomag ---------- */
+
+.network-route::after {
+    position: absolute;
+    top: -1px;
+    left: 0;
+    width: 70px;
+    height: 3px;
+    border-radius: 3px;
+    background: linear-gradient(90deg, transparent, var(--cyan), transparent);
+    content: "";
+    opacity: 0;
+}
+@keyframes route-a {
+    0%   { left: 0; opacity: 0; }
+    15%  { opacity: 1; }
+    80%  { opacity: 1; }
+    100% { left: calc(50% - 70px); opacity: 0; }
+}
+@keyframes route-b {
+    0%   { left: 50%; opacity: 0; }
+    15%  { opacity: 1; }
+    80%  { opacity: 1; }
+    100% { left: calc(100% - 70px); opacity: 0; }
+}
+.stage-uploading .network-route::after   { animation: route-a 2.4s ease-in-out infinite; }
+.stage-downloading .network-route::after { animation: route-b 2.4s ease-in-out infinite; }
+
+.moving-package { box-shadow: 0 0 16px rgba(93, 214, 232, .35); }
+.stage-uploading .moving-package::before,
+.stage-downloading .moving-package::before {
+    position: absolute;
+    top: 50%;
+    right: 100%;
+    width: 46px;
+    height: 2px;
+    margin-right: 4px;
+    background: linear-gradient(90deg, transparent, rgba(93, 214, 232, .85));
+    content: "";
+}
+
+/* ---------- Gyártói lépések ---------- */
+
+@keyframes build-bar {
+    0%   { transform: scaleX(0); opacity: 1; }
+    85%  { transform: scaleX(1); opacity: 1; }
+    100% { transform: scaleX(1); opacity: 0; }
+}
+.stage-factory .scene-node.factory::before {
+    position: absolute;
+    right: 14px;
+    bottom: 9px;
+    left: 14px;
+    height: 3px;
+    border-radius: 3px;
+    background: var(--cyan);
+    box-shadow: 0 0 10px var(--cyan);
+    content: "";
+    transform-origin: left;
+    animation: build-bar 2.2s ease-in-out infinite;
+}
+
+@keyframes key-turn {
+    0%, 100% { transform: rotate(-18deg); }
+    50%      { transform: rotate(22deg); }
+}
+.stage-keys .scene-node.factory .scene-ic .ic {
+    animation: key-turn 1.8s ease-in-out infinite;
+}
+
+.stage-signing .scene-node.factory::after {
+    position: absolute;
+    inset: -1px;
+    border: 2px solid var(--cyan);
+    border-radius: 14px;
+    content: "";
+    animation: ring-out 1.6s ease-out infinite;
+}
+
+/* ---------- Csomag-címke ---------- */
+
+@keyframes shimmer {
+    from { background-position: -140px 0; }
+    to   { background-position: 140px 0; }
+}
+.pkg-chip.signing {
+    background-image: linear-gradient(
+        100deg, transparent 30%, rgba(93, 214, 232, .18) 50%, transparent 70%
+    );
+    background-repeat: no-repeat;
+    background-size: 120px 100%;
+    animation: shimmer 1.4s linear infinite;
+}
+.dots i {
+    display: inline-block;
+    width: 4px;
+    height: 4px;
+    margin-left: 3px;
+    border-radius: 50%;
+    background: currentColor;
+    animation: blink 1.1s ease-in-out infinite;
+}
+.dots i:nth-child(2) { animation-delay: .18s; }
+.dots i:nth-child(3) { animation-delay: .36s; }
+
+@keyframes stamp {
+    from { opacity: 0; transform: scale(2.2) rotate(-25deg); }
+    to   { opacity: 1; transform: none; }
+}
+.pkg-state .ic { animation: stamp .45s cubic-bezier(.2, .9, .3, 1.2) both; }
+
+/* ---------- Ellenőrzés, elfogadás, elutasítás ---------- */
+
+@keyframes device-reject {
+    0%, 100% { transform: translateX(0); }
+    15%      { transform: translateX(-8px); }
+    35%      { transform: translateX(7px); }
+    55%      { transform: translateX(-5px); }
+    75%      { transform: translateX(3px); }
+}
+.stage-checking.out-bad .scene-node.device.active,
+.stage-error .scene-node.device {
+    border-color: rgba(251, 113, 133, .7);
+    animation: device-reject .6s ease-out 1;
+}
+.stage-accepted .scene-node.device::after {
+    position: absolute;
+    inset: -2px;
+    border: 2px solid var(--green);
+    border-radius: 16px;
+    content: "";
+    animation: ring-out 1.4s ease-out infinite;
+}
+
+/* ---------- Támadó ---------- */
+
+@keyframes figure-bob {
+    0%, 100% { transform: translateX(-50%) translateY(0); }
+    50%      { transform: translateX(-50%) translateY(-4px); }
+}
+@keyframes wiggle {
+    0%, 100% { transform: rotate(0); }
+    25%      { transform: rotate(-14deg); }
+    75%      { transform: rotate(14deg); }
+}
+.attacker-figure { animation: figure-bob 1.6s ease-in-out infinite; }
+.attacker-figure .ic { animation: wiggle .7s ease-in-out infinite; }
+
+.stage-attacker .scene-node.device::after,
+.stage-bruteforce .scene-node.device::after {
+    position: absolute;
+    inset: -2px;
+    border: 2px solid var(--green);
+    border-radius: 16px;
+    content: "";
+    opacity: 0;
+}
+.stage-attacker .scene-node.device::after   { animation: impact 1.8s ease-out infinite; }
+.stage-bruteforce .scene-node.device::after {
+    border-color: var(--red);
+    animation: impact 1.4s ease-out infinite;
+}
+.stage-attacker.out-bad .scene-node.device::after { border-color: var(--red); }
+
+/* ---------- Jelszópróba ---------- */
+
+@keyframes jiggle {
+    0%, 100% { transform: rotate(0) translateX(0); }
+    25%      { transform: rotate(-9deg) translateX(-2px); }
+    75%      { transform: rotate(9deg) translateX(2px); }
+}
+@keyframes alarm {
+    from { box-shadow: 0 0 0 0 rgba(251, 113, 133, .0); border-color: rgba(251, 113, 133, .4); }
+    to   { box-shadow: 0 0 34px 2px rgba(251, 113, 133, .45); border-color: rgba(251, 113, 133, .95); }
+}
+.stage-bruteforce .scene-node.device.active .scene-ic {
+    animation: jiggle .45s ease-in-out infinite;
+}
+.stage-bruteforce-success .scene-node.device.active {
+    animation: alarm .55s ease-in-out infinite alternate;
+}
+.stage-bruteforce-failed .scene-node.device.active {
+    border-color: rgba(74, 222, 155, .6);
+    --glow: 74, 222, 155;
+}
+.stage-bruteforce-failed .scene-node.device.active .scene-ic {
+    background: rgba(74, 222, 155, .12);
+    color: var(--green);
+}
+
+@keyframes live-pulse {
+    0%, 100% { border-color: rgba(251, 113, 133, .25); }
+    50%      { border-color: rgba(251, 113, 133, .7); }
+}
+@keyframes stripes { to { background-position: 17px 0, 0 0; } }
+.live-guess { animation: live-pulse 1.2s ease-in-out infinite; }
+.live-guess-label::before {
+    display: inline-block;
+    width: 7px;
+    height: 7px;
+    margin-right: 8px;
+    border-radius: 50%;
+    background: var(--red);
+    content: "";
+    animation: blink 1s ease-in-out infinite;
+}
+.live-guess-value::after {
+    margin-left: 3px;
+    color: var(--red);
+    content: "▍";
+    animation: blink 1s steps(1) infinite;
+}
+.guess-progress span {
+    background:
+        repeating-linear-gradient(
+            45deg, rgba(255, 255, 255, .22) 0 6px, transparent 6px 12px
+        ),
+        linear-gradient(90deg, #fb7185, #fbbf24);
+    background-size: 17px 17px, 100% 100%;
+    animation: stripes .6s linear infinite;
+}
+
+/* ---------- Lépéslista ---------- */
+
+@keyframes dot-pulse {
+    0%        { box-shadow: 0 0 0 0 rgba(93, 214, 232, .55); }
+    70%, 100% { box-shadow: 0 0 0 9px rgba(93, 214, 232, 0); }
+}
+@keyframes draw-check {
+    from { stroke-dashoffset: 24; }
+    to   { stroke-dashoffset: 0; }
+}
+@keyframes line-grow {
+    from { transform: scaleY(0); }
+    to   { transform: scaleY(1); }
+}
+@keyframes seg-fill {
+    from { transform: scaleX(0); }
+    to   { transform: scaleX(1); }
+}
+@keyframes label-in {
+    from { opacity: 0; transform: translateX(-8px); }
+    to   { opacity: 1; transform: none; }
+}
+.step.active .step-dot   { animation: dot-pulse 1.8s ease-out infinite; }
+.step.active .step-label { animation: label-in .4s ease-out both; }
+.step.done .step-dot .ic path {
+    stroke-dasharray: 24;
+    animation: draw-check .5s ease-out both;
+}
+.step.done:not(.last)::before {
+    transform-origin: top;
+    animation: line-grow .5s ease-out both;
+}
+.step-segs span { transform-origin: left; }
+.step-segs span.on { animation: seg-fill .4s ease-out both; }
+
+/* ---------- Napló ---------- */
+
+@keyframes line-in {
+    from { opacity: 0; transform: translateY(6px); background: rgba(93, 214, 232, .14); }
+    to   { opacity: 1; transform: none; background: transparent; }
+}
+.terminal-body .tl:first-child { animation: line-in .45s ease-out; }
+.terminal-topbar > span:first-child::before {
+    display: inline-block;
+    width: 7px;
+    height: 7px;
+    margin-right: 9px;
+    border-radius: 50%;
+    background: var(--green);
+    content: "";
+    animation: blink 1.6s ease-in-out infinite;
+}
+
+/* ---------- Gombok ---------- */
+
+.stButton > button,
+[data-testid="stFormSubmitButton"] button {
+    transition: transform .15s ease, border-color .15s ease,
+                color .15s ease, background .15s ease;
+}
+.stButton > button:hover:not(:disabled),
+[data-testid="stFormSubmitButton"] button:hover:not(:disabled) {
+    transform: translateY(-1px);
+}
+.stButton > button:active:not(:disabled),
+[data-testid="stFormSubmitButton"] button:active:not(:disabled) {
+    transform: scale(.97);
+}
+@keyframes nudge {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(93, 214, 232, .45); }
+    60%      { box-shadow: 0 0 0 10px rgba(93, 214, 232, 0); }
+}
+.st-key-scene_next button:not(:disabled) { animation: nudge 2s ease-out infinite; }
+
+/* ---------- Kevesebb mozgás ---------- */
+
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+        animation-duration: .01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: .01ms !important;
+    }
+}
+"""
+
+APP_CSS += FX_STATIC + "".join(FX_TEMPLATE.replace("§", s) for s in "ab")
+
+
+FINALE_CSS = """
+.finale {
+    position: fixed;
+    inset: 0;
+    z-index: 999990;
+    display: grid;
+    place-items: center;
+    overflow: hidden;
+    background: radial-gradient(ellipse at 50% 40%, #0f2a36 0%, #070c12 62%);
+    animation: finale-fade .8s ease-out both;
+}
+@keyframes finale-fade { from { opacity: 0; } to { opacity: 1; } }
+
+/* mozgó rács */
+.finale-grid {
+    position: absolute;
+    inset: -56px;
+    background-image:
+        linear-gradient(rgba(93, 214, 232, .07) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(93, 214, 232, .07) 1px, transparent 1px);
+    background-size: 56px 56px;
+    -webkit-mask-image: radial-gradient(circle at 50% 50%, #000 0%, transparent 70%);
+    mask-image: radial-gradient(circle at 50% 50%, #000 0%, transparent 70%);
+    animation: finale-grid 10s linear infinite;
+}
+@keyframes finale-grid { to { transform: translate(56px, 56px); } }
+
+/* felfelé szálló fénypontok */
+.finale-particles i {
+    position: absolute;
+    bottom: -12px;
+    left: var(--x);
+    width: var(--z);
+    height: var(--z);
+    border-radius: 50%;
+    background: var(--cyan);
+    box-shadow: 0 0 10px var(--cyan);
+    opacity: 0;
+    animation: finale-rise var(--d) var(--s) linear infinite;
+}
+.finale-particles i:nth-child(3n)   { background: var(--green); box-shadow: 0 0 10px var(--green); }
+.finale-particles i:nth-child(3n+1) { background: #a78bfa;      box-shadow: 0 0 10px #a78bfa; }
+@keyframes finale-rise {
+    0%   { opacity: 0;  transform: translateY(0); }
+    10%  { opacity: .8; }
+    90%  { opacity: .5; }
+    100% { opacity: 0;  transform: translateY(-110vh); }
+}
+
+.finale-core {
+    position: relative;
+    z-index: 2;
+    padding: 0 1.5rem;
+    text-align: center;
+}
+
+/* pajzs-ikon gyűrűkkel */
+.finale-badge {
+    position: relative;
+    display: grid;
+    width: 112px;
+    height: 112px;
+    margin: 0 auto 34px;
+    place-items: center;
+    border: 1px solid rgba(93, 214, 232, .5);
+    border-radius: 30px;
+    background: #0e2830;
+    color: var(--cyan);
+    animation:
+        finale-badge-in .9s .2s cubic-bezier(.2, .9, .3, 1.25) both,
+        icon-glow 3.6s 1.2s ease-in-out infinite;
+}
+@keyframes finale-badge-in {
+    from { opacity: 0; transform: scale(.3) rotate(-25deg); }
+    to   { opacity: 1; transform: none; }
+}
+.finale-ring {
+    position: absolute;
+    inset: -1px;
+    border: 2px solid var(--cyan);
+    border-radius: 30px;
+    opacity: 0;
+    animation: finale-ring 2.8s 1.1s ease-out infinite;
+}
+.finale-ring.r2 { animation-delay: 2.5s; }
+@keyframes finale-ring {
+    from { opacity: .7; transform: scale(1); }
+    to   { opacity: 0;  transform: scale(1.9); }
+}
+
+/* cím: szavanként élesedik be, utána fénycsík fut át rajta */
+.finale-title {
+    font-size: clamp(2.4rem, 6vw, 5rem);
+    font-weight: 800;
+    letter-spacing: -.03em;
+    line-height: 1.1;
+}
+.finale-title span {
+    display: inline-block;
+    margin: 0 .14em;
+    background: linear-gradient(100deg, #fff 0%, var(--cyan) 50%, #fff 100%);
+    background-size: 200% 100%;
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    animation:
+        finale-word .8s calc(.7s + var(--i) * .16s) ease-out both,
+        finale-shine 5s 2.4s linear infinite;
+}
+@keyframes finale-word {
+    from { opacity: 0; transform: translateY(28px); filter: blur(12px); }
+    to   { opacity: 1; transform: none;             filter: blur(0); }
+}
+@keyframes finale-shine { to { background-position: 200% 0; } }
+
+.finale-rule {
+    width: 0;
+    height: 2px;
+    margin: 34px auto 26px;
+    background: linear-gradient(90deg, transparent, var(--cyan), transparent);
+    animation: finale-rule 1s 1.6s ease-out forwards;
+}
+@keyframes finale-rule { to { width: min(360px, 60vw); } }
+
+.finale-by {
+    color: var(--muted);
+    font: 13px var(--mono);
+    letter-spacing: .28em;
+    text-transform: uppercase;
+    animation: finale-up .6s 2s ease-out both;
+}
+@keyframes finale-up {
+    from { opacity: 0; transform: translateY(12px); }
+    to   { opacity: 1; transform: none; }
+}
+
+/* név: betűnként érkezik */
+.finale-name {
+    margin-top: 12px;
+    color: #fff;
+    font-size: clamp(1.5rem, 3.2vw, 2.4rem);
+    font-weight: 700;
+    letter-spacing: .01em;
+    animation: finale-glow 3s 4.5s ease-in-out infinite;
+}
+.finale-name span {
+    display: inline-block;
+    animation: finale-letter .5s calc(2.3s + var(--i) * .05s) ease-out both;
+}
+@keyframes finale-letter {
+    from { opacity: 0; transform: translateY(14px) scale(.8); }
+    to   { opacity: 1; transform: none; }
+}
+@keyframes finale-glow {
+    0%, 100% { text-shadow: 0 0 0 rgba(93, 214, 232, 0); }
+    50%      { text-shadow: 0 0 22px rgba(93, 214, 232, .6); }
+}
+
+/* halvány "Vissza" gomb a képernyő alján */
+.st-key-finale_back {
+    position: fixed;
+    bottom: 22px;
+    left: 50%;
+    z-index: 999999;
+    width: auto !important;
+    transform: translateX(-50%);
+    opacity: .35;
+    transition: opacity .2s ease;
+}
+.st-key-finale_back:hover { opacity: 1; }
+.st-key-finale_back button {
+    min-height: 2.2rem;
+    color: var(--muted);
+    font-size: 13px;
+    animation: finale-up .6s 4s ease-out both;
+}
+"""
+
+APP_CSS += FINALE_CSS
 
 
 def inject_css() -> None:
@@ -1209,100 +1724,58 @@ def highlight_phrases(
     return "".join(parts)
 
 
-def draw_story(placeholder, story: dict[str, Any]) -> None:
-    """Megjeleníti az animált gyártó → internet → eszköz jelenetet."""
+STAGE_LABELS = {
+    "idle": "Várakozik",
+    "factory": "Build",
+    "keys": "Aláírókulcs",
+    "signing": "Aláírás",
+    "delivery": "Közzététel",
+    "uploading": "Letöltés",
+    "downloading": "Bootloader",
+    "checking": "Ellenőrzés",
+    "accepted": "Telepítés",
+    "attacker": "Támadási próba",
+    "bruteforce": "Jelszópróba",
+    "bruteforce-success": "Találat",
+    "bruteforce-failed": "Próba kész",
+    "done": "Összesítés",
+    "error": "Hiba",
+}
 
-    allowed_stages = {
-        "idle",
-        "factory",
-        "keys",
-        "signing",
-        "delivery",
-        "uploading",
-        "downloading",
-        "checking",
-        "accepted",
-        "attacker",
-        "bruteforce",
-        "bruteforce-success",
-        "bruteforce-failed",
-        "done",
-        "error",
-    }
+DEFAULT_ACTIONS = {
+    "idle": "Add meg a kész firmware-fájlt és az aláírókulcs jelszavát.",
+    "factory": "A kiadási folyamat kész firmware-binárist ad át; a program beolvassa a fájl bájtjait.",
+    "keys": "A kiadási rendszer előkészíti a privát aláírókulcsot és a hozzá tartozó publikus kulcsot.",
+    "signing": "A csomagkészítő manifestet állít elő, lenyomatot számít, majd aláírja a manifestet.",
+    "delivery": "A program az aláírt csomagot az out/ mappába menti.",
+    "uploading": (
+        "Üzemi rendszerben a kiadási szolgáltatás a verziózott csomagot HTTPS-en "
+        "közzéteszi a frissítési tárhelyen. Ez a program nem küld HTTP-kérést."
+    ),
+    "downloading": (
+        "Üzemi rendszerben az eszköz frissítési kliense HTTPS-en tölti le a neki szánt "
+        "csomagot. Ez a program nem végez hálózati letöltést."
+    ),
+    "checking": "Az ellenőrző megvizsgálja a csomag aláírását, felépítését, célmodelljét, fájladatait és verzióját.",
+    "accepted": "Az ellenőrzés sikeres; a demó frissíti az eszköz helyi verzióállapotát.",
+    "attacker": "Az eszköz ellenőrzési eljárása megvizsgálja a módosított tesztcsomagokat.",
+    "bruteforce": "A jelszópróba kizárólag a helyi keys/private.json fájlt vizsgálja.",
+    "bruteforce-success": "Az egyik kipróbált jelölt megnyitotta a helyi privát kulcsot.",
+    "bruteforce-failed": "A kipróbált jelöltek közül egyik sem nyitotta meg a helyi privát kulcsot.",
+    "done": "A bemutató összesíti az ellenőrzési eredményeket.",
+    "error": "A folyamat hiba miatt leállt.",
+}
+
+
+def draw_story(placeholder, story: dict[str, Any], fx: int = 0) -> None:
+    """Megjeleníti a gyártó → internet → eszköz jelenetet és a hozzá tartozó szöveget."""
 
     if not isinstance(story, dict):
         story = {}
 
     stage = story.get("stage", "idle")
-    if not isinstance(stage, str) or stage not in allowed_stages:
+    if not isinstance(stage, str) or stage not in STAGE_LABELS:
         stage = "idle"
-
-    statuses = {
-        "idle": "VÁRAKOZIK",
-        "factory": "FÁJL BEOLVASÁSA",
-        "keys": "KULCS ELŐKÉSZÍTÉSE",
-        "signing": "ALÁÍRÁS",
-        "delivery": "CSOMAG MENTÉSE",
-        "uploading": "CSOMAGÚTVONAL",
-        "downloading": "LETÖLTÉSI ÚTVONAL",
-        "checking": "ELLENŐRZÉS",
-        "accepted": "ELFOGADVA",
-        "attacker": "TÁMADÁSPRÓBA",
-        "bruteforce": "JELSZÓPRÓBA",
-        "bruteforce-success": "TALÁLAT",
-        "bruteforce-failed": "PRÓBA KÉSZ",
-        "done": "BEMUTATÓ KÉSZ",
-        "error": "HIBA",
-    }
-
-    default_actions = {
-        "idle": "Add meg az elkészült firmware-binárist és az aláírókulcs jelszavát.",
-        "factory": (
-            "A kiadási folyamat kész firmware-binárist ad át; "
-            "az alkalmazás a fájl bájtjait olvassa be."
-        ),
-        "keys": (
-            "A kiadási rendszer előkészíti a privát aláírókulcsot "
-            "és a hozzá tartozó publikus kulcsot."
-        ),
-        "signing": (
-            "A csomagkészítő manifestet állít elő, lenyomatot számít, "
-            "majd aláírja a manifestet."
-        ),
-        "delivery": (
-            "Az alkalmazás az aláírt csomagot az out/ mappába menti."
-        ),
-        "uploading": (
-            "Üzemi rendszerben a kiadási szolgáltatás a verziózott csomagot "
-            "HTTPS-en publikálja a frissítési tárhelyen; ez a program nem küld HTTP-kérést."
-        ),
-        "downloading": (
-            "Üzemi rendszerben az eszköz frissítési kliense a neki szánt csomagot "
-            "HTTPS-en tölti le; ez a program nem végez hálózati letöltést."
-        ),
-        "checking": (
-            "Az ellenőrző a csomag aláírását, felépítését, célmodelljét, "
-            "fájladatait és verzióját vizsgálja."
-        ),
-        "accepted": (
-            "Az ellenőrzés sikeres; a demó az eszköz helyi verzióállapotát frissíti."
-        ),
-        "attacker": (
-            "A tesztcsomagok módosításait az eszköz ellenőrzési eljárása vizsgálja."
-        ),
-        "bruteforce": (
-            "A jelszópróba kizárólag a helyi keys/private.json fájlt vizsgálja."
-        ),
-        "bruteforce-success": (
-            "A megpróbált jelölt megnyitotta a helyi privát kulcsot."
-        ),
-        "bruteforce-failed": (
-            "A kipróbált jelöltek egyike sem nyitotta meg a helyi privát kulcsot."
-        ),
-        "done": "A bemutató összesíti az ellenőrzési eredményeket.",
-        "error": "A folyamat hiba miatt leállt.",
-    }
-
 
     factory_active = stage in {
         "factory",
@@ -1324,21 +1797,23 @@ def draw_story(placeholder, story: dict[str, Any]) -> None:
     }
 
     is_bruteforce = stage.startswith("bruteforce")
-    target_icon = "🔐" if is_bruteforce else "📟"
-    target_title = "PRIVÁT KULCS" if is_bruteforce else "ESZKÖZ"
-    target_caption = (
-        "jelszóval védett" if is_bruteforce else "letölt · ellenőriz"
-    )
+    bad_stage = stage in {"attacker", "error"} or is_bruteforce
+
+    # --- Szöveg ------------------------------------------------------
 
     raw_action = story.get("what")
     has_custom_action = raw_action is not None and bool(str(raw_action).strip())
-    action = plain_text(raw_action, default_actions[stage], limit=1200) or default_actions[stage]
+    action = (
+        plain_text(raw_action, DEFAULT_ACTIONS[stage], limit=1200)
+        or DEFAULT_ACTIONS[stage]
+    )
 
     who = plain_text(story.get("who"), "", 60)
     where = plain_text(story.get("where"), "", 80)
     actor_to_highlight = who
 
-    # A szereplő az eseménymondat alanya lesz; külön KI? mező nem jelenik meg.
+    # A szereplő az eseménymondat alanya lesz ("Az eszköz ...").
+    # Üres "who" esetén a "what" teljes mondat.
     if (
         who
         and has_custom_action
@@ -1351,94 +1826,112 @@ def draw_story(placeholder, story: dict[str, Any]) -> None:
     action = ensure_period(action)
 
     if stage == "attacker" or is_bruteforce or who.casefold() == "támadó":
-        actor_style = "color:#fda4af;font-weight:850;"
+        actor_style = "color:#fda4af;font-weight:700;"
     elif who.casefold() in {"eszköz", "device"}:
-        actor_style = "color:#6ee7b7;font-weight:850;"
+        actor_style = "color:#4ade9b;font-weight:700;"
     else:
-        actor_style = "color:#67e8f9;font-weight:850;"
-
-    location_style = "color:#fbbf24;font-weight:850;"
-    defense_style = "color:#6ee7b7;font-weight:850;"
+        actor_style = "color:#5dd6e8;font-weight:700;"
 
     phrases = [
         (actor_to_highlight, actor_style),
-        (where, location_style),
+        (where, "color:#fbbf24;font-weight:700;"),
     ]
     if stage == "attacker":
-        phrases.append(("az eszköz", defense_style))
+        phrases.append(("az eszköz", "color:#4ade9b;font-weight:700;"))
 
     action_markup = highlight_phrases(action, phrases)
 
+    step = int(story.get("step") or 0)
+    kicker = plain_text(story.get("kicker"), "", 60) or STEP_GROUP_OF.get(step, "")
     title = plain_text(story.get("title"), "Firmware-frissítés", 100)
-
-    def node(
-        kind: str,
-        icon: str,
-        node_title: str,
-        caption: str,
-        active: bool,
-        extra: str = "",
-    ) -> str:
-        active_class = " active" if active else ""
-        return (
-            f'<div class="scene-node {kind}{active_class}">'
-            f'<span class="scene-icon">{html.escape(icon)}</span>'
-            f"<strong>{html.escape(node_title)}</strong>"
-            f"<small>{html.escape(caption)}</small>"
-            f"{extra}"
-            "</div>"
-        )
-
-    device_badges = (
-        '<span class="node-badge shield">🛡️</span>'
-        '<span class="node-badge accepted">✓</span>'
-        '<span class="node-badge breached">⚠️</span>'
-    )
-
-    outcome_markup = ""
-    outcome = story.get("outcome")
-    if outcome:
-        outcome_class = "good" if bool(story.get("outcome_ok", True)) else "bad"
-        outcome_markup = (
-            f'<div class="scene-outcome {outcome_class}">'
-            f'{html.escape(plain_text(outcome, "", 180))}'
-            "</div>"
-        )
 
     why_markup = ""
     why = plain_text(story.get("why"), "", limit=700)
     if why:
         why_markup = (
-            '<div class="scene-importance">'
-            f"{html.escape(ensure_period(why))}"
+            '<div class="scene-why">'
+            '<div class="scene-why-label">Miért fontos?</div>'
+            f'<div class="scene-why-text">{html.escape(ensure_period(why))}</div>'
             "</div>"
         )
 
-    packet_icon = "🔑" if is_bruteforce else "⚠️"
+    outcome_markup = ""
+    outcome_state = ""
+    outcome = story.get("outcome")
+    if outcome:
+        ok = bool(story.get("outcome_ok", True))
+        outcome_state = "out-good" if ok else "out-bad"
+        outcome_markup = (
+            f'<div class="scene-outcome {"good" if ok else "bad"}">'
+            f'{icon("check-circle" if ok else "x-circle", 18)}'
+            f'<span>{html.escape(plain_text(outcome, "", 180))}</span>'
+            "</div>"
+        )
 
-    markup = (
-        f'<div class="storyboard stage-{stage}">'
-        '<div class="network-header">'
-        "<div>"
-        '<div class="network-kicker">A FRISSÍTÉS ÚTJA</div>'
-        f'<div class="network-title">{html.escape(title)}</div>'
-        "</div>"
-        f'<div class="network-status">{statuses[stage]}</div>'
-        "</div>"
+    # --- Jelenet -----------------------------------------------------
 
+    def node(kind: str, glyph: str, name: str, caption: str, active: bool) -> str:
+        return (
+            f'<div class="scene-node {kind}{" active" if active else ""}">'
+            f'<span class="scene-ic">{icon(glyph, 22)}</span>'
+            f"<strong>{html.escape(name)}</strong>"
+            f"<small>{html.escape(caption)}</small>"
+            "</div>"
+        )
+
+    if is_bruteforce:
+        device_node = node("device", "key", "Privát kulcs", "jelszóval védett", device_active)
+    else:
+        device_node = node("device", "chip", "Eszköz", "letölt · ellenőriz", device_active)
+
+    chip_state = ""
+    chip_class = ""
+    if stage == "signing":
+        chip_state = '<span class="pkg-state">aláírás<span class="dots"><i></i><i></i><i></i></span></span>'
+        chip_class = " signing"
+    elif stage in {
+        "delivery",
+        "uploading",
+        "downloading",
+        "checking",
+        "accepted",
+    }:
+        chip_state = f'<span class="pkg-state">{icon("check", 13)}aláírva</span>'
+    elif stage == "attacker":
+        chip_state = '<span class="pkg-state bad">módosított</span>'
+    elif stage == "error":
+        chip_state = '<span class="pkg-state bad">elutasítva</span>'
+
+    chip_markup = (
+        f'<div class="pkg-chip{chip_class}">{icon("box", 15)}<b>csomag</b>{chip_state}</div>'
+        if chip_state
+        else ""
+    )
+
+    packet_icon = "key" if is_bruteforce else "box"
+
+    scene_markup = (
+        f'<div class="storyboard stage-{stage} fx-{fx % 2} {outcome_state}">'
+        '<div class="network-card">'
+        '<div class="network-head">'
+        "<span>Gyártó → internet → eszköz</span>"
+        f'<span class="status-pill{" bad" if bad_stage else ""}">'
+        f"{html.escape(STAGE_LABELS[stage])}</span>"
+        "</div>"
         '<div class="network-scene">'
+        f"{chip_markup}"
         '<div class="network-route"></div>'
-        f'{node("factory", "🏭", "GYÁRTÓ", "készít · aláír", factory_active)}'
-        f'{node("cloud", "☁️", "INTERNET", "frissítési szerver", cloud_active)}'
-        f'{node("device", target_icon, target_title, target_caption, device_active, device_badges)}'
-        '<div class="signature-stamp">🔏 ALÁÍRVA</div>'
-        '<div class="moving-package">📦</div>'
-        '<div class="attacker-figure"><span>🕵️</span><span>TÁMADÓ</span></div>'
-        f'<div class="attack-packet">{packet_icon}</div>'
+        f'{node("factory", "factory", "Gyártó", "készít · aláír", factory_active)}'
+        f'{node("cloud", "cloud", "Internet", "frissítési szerver", cloud_active)}'
+        f"{device_node}"
+        f'<div class="moving-package">{icon("box", 18)}</div>'
+        f'<div class="attacker-figure">{icon("bug", 15)}<span>TÁMADÓ</span></div>'
+        f'<div class="attack-packet">{icon(packet_icon, 18)}</div>'
         "</div>"
-
-        '<div class="scene-caption">'
-        '<div class="scene-action-label">TECHNIKAI MŰVELET</div>'
+        "</div>"
+        '<div class="scene-copy">'
+        f'<div class="scene-kicker">{html.escape(kicker)}</div>'
+        f'<div class="scene-title">{html.escape(title)}</div>'
         f'<div class="scene-action">{action_markup}</div>'
         f"{why_markup}"
         f"{outcome_markup}"
@@ -1446,12 +1939,76 @@ def draw_story(placeholder, story: dict[str, Any]) -> None:
         "</div>"
     )
 
-    placeholder.markdown(markup, unsafe_allow_html=True)
+    placeholder.markdown(scene_markup, unsafe_allow_html=True)
+
+
+def draw_stepper(placeholder, current: dict[str, Any] | None) -> None:
+    """A bal oldali lépéslista; az aktuális jelenethez igazodik."""
+
+    current_step = int(current.get("step") or 0) if current else 0
+    sub = int(current.get("sub") or 0) if current else 0
+    sub_total = int(current.get("sub_total") or 0) if current else 0
+
+    parts = ['<div class="stepper">']
+
+    for group, items in STEP_GROUPS:
+        parts.append(f'<div class="step-group">{html.escape(group)}</div>')
+
+        for position, (number, label) in enumerate(items):
+            if number < current_step:
+                state = "done"
+            elif number == current_step:
+                state = "active"
+            else:
+                state = "pending"
+
+            last = " last" if position == len(items) - 1 else ""
+            dot = icon("check", 13) if state == "done" else str(number)
+
+            segments = ""
+            if state == "active" and sub_total:
+                segments = (
+                    '<div class="step-segs">'
+                    + "".join(
+                        f'<span class="{"on" if index < sub else ""}"></span>'
+                        for index in range(sub_total)
+                    )
+                    + "</div>"
+                )
+
+            parts.append(
+                f'<div class="step {state}{last}">'
+                '<div class="step-row">'
+                f'<span class="step-dot">{dot}</span>'
+                f'<span class="step-label">{html.escape(label)}</span>'
+                "</div>"
+                f"{segments}"
+                "</div>"
+            )
+
+    parts.append("</div>")
+    placeholder.markdown("".join(parts), unsafe_allow_html=True)
 
 
 # ---------------------------------------------------------------------
 # Technikai terminálnapló
 # ---------------------------------------------------------------------
+
+LOG_LINE = re.compile(r"^(\d\d:\d\d:\d\d)\s+(?:\[([^\]]+)\]\s*)?(.*)$", re.S)
+
+TAG_CLASSES = {
+    "ellenőrzés": "t-check",
+    "ok": "t-ok",
+    "kész": "t-ok",
+    "találat": "t-ok",
+    "hiba": "t-err",
+    "fail": "t-err",
+    "figyelem": "t-warn",
+    "warn": "t-warn",
+    "támadó": "t-att",
+    "audit": "t-att",
+}
+
 
 class Terminal:
     """A technikai eseményeket a jelenet mellett, külön panelben mutatja."""
@@ -1463,7 +2020,7 @@ class Terminal:
         if isinstance(saved, list):
             self.lines = list(saved)
         else:
-            self.lines = ["[INFO] A napló készen áll."]
+            self.lines = []
             st.session_state["terminal_lines"] = self.lines
 
         self.draw()
@@ -1489,37 +2046,38 @@ class Terminal:
 
         # A CSS oszlopirányával együtt a legújabb sor a panel alján marad.
         for line in reversed(self.lines):
-            if "[HIBA]" in line or "[FAIL]" in line:
-                css_class = "log-error"
-            elif "[TÁMADÓ]" in line or "[AUDIT]" in line:
-                css_class = "log-attack"
-            elif "[FIGYELEM]" in line or "[WARN]" in line:
-                css_class = "log-warn"
-            elif any(tag in line for tag in ("[OK]", "[KÉSZ]", "[TALÁLAT]")):
-                css_class = "log-ok"
+            match = LOG_LINE.match(line)
+            if match:
+                stamp, tag, body = match.groups()
             else:
-                css_class = "log-normal"
+                stamp, tag, body = "", None, line
+
+            tag_markup = ""
+            if tag:
+                tag_class = TAG_CLASSES.get(tag.casefold(), "")
+                tag_markup = (
+                    f'<span class="tl-tag {tag_class}">'
+                    f"{html.escape(tag.casefold())}</span>"
+                )
 
             rendered.append(
-                f'<div class="terminal-line {css_class}">'
-                f"{html.escape(line)}"
+                '<div class="tl">'
+                f'<span class="tl-time">{html.escape(stamp)}</span>'
+                f'<span class="tl-body">{tag_markup}{html.escape(body)}</span>'
                 "</div>"
             )
 
         if not rendered:
             rendered.append(
-                '<div class="terminal-line log-normal">A napló üres.</div>'
+                '<div class="tl"><span class="tl-time"></span>'
+                '<span class="tl-body">A napló üres.</span></div>'
             )
 
         markup = (
             '<div class="terminal-window">'
             '<div class="terminal-topbar">'
-            '<span class="terminal-dots">'
-            '<span class="terminal-dot terminal-red"></span>'
-            '<span class="terminal-dot terminal-yellow"></span>'
-            '<span class="terminal-dot terminal-green-dot"></span>'
-            "</span>"
-            "<span>RÉSZLETES TECHNIKAI NAPLÓ</span>"
+            "<span>Technikai napló</span>"
+            f'<span class="terminal-count">{len(self.lines)} sor</span>'
             "</div>"
             f'<div class="terminal-body">{"".join(rendered)}</div>'
             "</div>"
@@ -1624,17 +2182,45 @@ def automatic_guess_stream() -> Generator[str, None, None]:
                 yield candidate
 
 
+def read_wordlist_head(
+    path: Path,
+    limit: int,
+    log: Callable[[str], None],
+) -> tuple[list[str], bool]:
+    """A szólista első `limit` nem üres sorát adja vissza; a második érték jelzi, ha maradt le."""
+
+    candidates: list[str] = []
+
+    if not path.is_file():
+        log(f"[FIGYELEM] Nem található a jelszólista: {path}")
+        return candidates, False
+
+    try:
+        with path.open("r", encoding="utf-8-sig", newline="") as file:
+            for line in file:
+                candidate = line.rstrip("\r\n")
+                if candidate == "":
+                    continue
+
+                if len(candidates) >= limit:
+                    return candidates, True
+
+                candidates.append(candidate)
+    except (OSError, UnicodeError) as exc:
+        log(f"[FIGYELEM] A jelszavak.txt nem olvasható: {exc}")
+
+    return candidates, False
+
 def run_automatic_password_attack(
     log: Callable[[str], None],
     show_guess: Callable[..., None],
     wordlist_path: Path | str | None = None,
 ) -> dict[str, Any]:
-    """A jelszavak.txt-t és a korlátozott kiegészítő listát a helyi kulcson próbálja."""
+    """A jelszavak.txt első sorait (összesen legfeljebb 200 jelöltet) próbálja a helyi kulcson."""
 
     private_path = KEYS / "private.json"
 
-    if not private_path.is_file():
-        log("[FIGYELEM] Nincs helyi privát kulcs; a jelszópróba kimarad.")
+    def empty_result() -> dict[str, Any]:
         return {
             "found": False,
             "skipped": True,
@@ -1644,50 +2230,45 @@ def run_automatic_password_attack(
             "extra_attempts": 0,
         }
 
+    if not private_path.is_file():
+        log("[FIGYELEM] Nincs helyi privát kulcs; a jelszópróba kimarad.")
+        return empty_result()
+
     path = PASSWORD_LIST if wordlist_path is None else Path(wordlist_path)
-    wordlist_count = 0
 
-    if path.is_file():
-        try:
-            with path.open("r", encoding="utf-8-sig", newline="") as file:
-                wordlist_count = sum(
-                    1
-                    for line in file
-                    if line.rstrip("\r\n") != ""
-                )
-        except (OSError, UnicodeError) as exc:
-            log(f"[FIGYELEM] A jelszavak.txt nem olvasható: {exc}")
-    else:
-        log(f"[FIGYELEM] Nem található a jelszólista: {path}")
+    wordlist, cut_off = read_wordlist_head(
+        path,
+        AUTO_ATTACK_MAX_GUESSES,
+        log,
+    )
 
+    # A maradék helyet kiegészítő jelöltek töltik ki (a szólistában
+    # már szereplőket kihagyjuk).
+    already = set(wordlist)
     extra_guesses = list(
         islice(
-            automatic_guess_stream(),
-            AUTO_ATTACK_MAX_EXTRA_GUESSES,
+            (c for c in automatic_guess_stream() if c not in already),
+            AUTO_ATTACK_MAX_GUESSES - len(wordlist),
         )
     )
-    total = wordlist_count + len(extra_guesses)
+    total = len(wordlist) + len(extra_guesses)
 
     if total == 0:
         log("[FIGYELEM] Nincs kipróbálható jelszójelölt.")
-        return {
-            "found": False,
-            "skipped": True,
-            "attempts": 0,
-            "password": None,
-            "wordlist_attempts": 0,
-            "extra_attempts": 0,
-        }
+        return empty_result()
 
     log(
-        f"[INFO] Helyi kulcspróba: {wordlist_count} szólista-jelölt, "
-        f"legfeljebb {len(extra_guesses)} kiegészítő jelölt."
+        f"[INFO] Helyi kulcspróba: legfeljebb {AUTO_ATTACK_MAX_GUESSES} jelölt "
+        f"({len(wordlist)} szólista-jelölt, {len(extra_guesses)} kiegészítő)."
     )
+    if cut_off:
+        log(
+            f"[INFO] A jelszavak.txt további sorai kimaradnak, "
+            f"csak az első {AUTO_ATTACK_MAX_GUESSES} számít."
+        )
 
     started = time.perf_counter()
     attempts = 0
-    wordlist_attempts = 0
-    extra_attempts = 0
 
     def try_candidate(candidate: str, phase: str) -> bool:
         nonlocal attempts
@@ -1711,51 +2292,34 @@ def run_automatic_password_attack(
         del private_key
         return True
 
-    if path.is_file() and wordlist_count:
-        try:
-            with path.open("r", encoding="utf-8-sig", newline="") as file:
-                for line in file:
-                    candidate = line.rstrip("\r\n")
-                    if candidate == "":
-                        continue
+    def found_result(candidate: str, wordlist_n: int, extra_n: int) -> dict[str, Any]:
+        log(f"[TALÁLAT] A helyi kulcs jelszava: {candidate!r}")
+        return {
+            "found": True,
+            "skipped": False,
+            "attempts": attempts,
+            "password": candidate,
+            "wordlist_attempts": wordlist_n,
+            "extra_attempts": extra_n,
+            "seconds": time.perf_counter() - started,
+        }
 
-                    wordlist_attempts += 1
-
-                    if try_candidate(candidate, "Szólista-próba"):
-                        elapsed = time.perf_counter() - started
-                        log(f"[TALÁLAT] A helyi kulcs jelszava: {candidate!r}")
-                        return {
-                            "found": True,
-                            "skipped": False,
-                            "attempts": attempts,
-                            "password": candidate,
-                            "wordlist_attempts": wordlist_attempts,
-                            "extra_attempts": 0,
-                            "seconds": elapsed,
-                        }
-        except (OSError, UnicodeError) as exc:
-            log(f"[FIGYELEM] A szólista beolvasása megszakadt: {exc}")
+    wordlist_attempts = 0
+    for candidate in wordlist:
+        wordlist_attempts += 1
+        if try_candidate(candidate, "Szólista-próba"):
+            return found_result(candidate, wordlist_attempts, 0)
 
     log(
         f"[INFO] A szólista próbája befejeződött: "
         f"{wordlist_attempts} jelölt."
     )
 
+    extra_attempts = 0
     for candidate in extra_guesses:
         extra_attempts += 1
-
         if try_candidate(candidate, "Kiegészítő jelszópróba"):
-            elapsed = time.perf_counter() - started
-            log(f"[TALÁLAT] A helyi kulcs jelszava: {candidate!r}")
-            return {
-                "found": True,
-                "skipped": False,
-                "attempts": attempts,
-                "password": candidate,
-                "wordlist_attempts": wordlist_attempts,
-                "extra_attempts": extra_attempts,
-                "seconds": elapsed,
-            }
+            return found_result(candidate, wordlist_attempts, extra_attempts)
 
     elapsed = time.perf_counter() - started
     log(
@@ -1776,6 +2340,7 @@ def run_automatic_password_attack(
         "extra_attempts": extra_attempts,
         "seconds": elapsed,
     }
+
 # ---------------------------------------------------------------------
 # Külön, feltölthető szólista-audit
 # ---------------------------------------------------------------------
@@ -2014,10 +2579,13 @@ def scene(
     who: str,
     what: str,
     where: str = "",
-    progress: int,
     why: str = "",
     outcome: str = "",
     outcome_ok: bool = True,
+    step: int = 0,
+    kicker: str = "",
+    sub: int = 0,
+    sub_total: int = 0,
 ) -> dict[str, Any]:
     """Egy bemutató-jelenet adatai; a UI ezt rajzolja ki."""
     return {
@@ -2029,7 +2597,10 @@ def scene(
         "why": why,
         "outcome": outcome,
         "outcome_ok": outcome_ok,
-        "progress": max(0, min(100, int(progress))),
+        "step": step,
+        "kicker": kicker,
+        "sub": sub,
+        "sub_total": sub_total,
     }
 
 
@@ -2039,6 +2610,7 @@ def run_pipeline(
     filename: str,
     log: Callable[[str], None],
     show_guess: Callable[..., None],
+    meta: dict[str, Any],
 ) -> Generator[dict[str, Any], None, None]:
     """A firmware-frissítés éles folyamatát mutatja be, a helyi végrehajtás állapotától függetlenül."""
 
@@ -2066,37 +2638,38 @@ def run_pipeline(
     # 1. Build és tesztelés.
     yield scene(
         stage="factory",
-        title="1. Firmware-build és tesztelés",
+        title="Firmware-build és tesztelés",
+        step=1,
         who="Gyártóvállalat",
         what=(
-            "A CI/build-rendszer a forráskódból lefordítja a firmware-t, "
-            "lefuttatja a teszteket, és reprodukálható bináris fájlt állít elő. "
+            "a forráskódból lefordítja a firmware-t, lefuttatja a teszteket, "
+            "és reprodukálható bináris fájlt állít elő. "
             f"A kiadási artefaktum most a {filename} fájl ({len(firmware)} bájt)."
         ),
         where=filename,
         why=(
-            "Csak a tesztelt, reprodukálható build kerülhet aláírásra és kiadásra, "
+            "Csak tesztelt, reprodukálható build kerülhet aláírásra és kiadásra, "
             "így a kiadott kód visszavezethető a forráskódra."
         ),
-        progress=4,
     )
 
     # 2. Kiadói aláírókulcs.
     yield scene(
         stage="keys",
-        title="2. Kiadói aláírókulcs",
+        title="Kiadói aláírókulcs",
+        step=2,
         who="Gyártóvállalat",
         what=(
-            "A kiadói privát kulcs HSM-ben vagy kulcskezelő szolgáltatásban van, "
-            "és nem hagyja el azt. Aláírást csak a kiadási szerver kérhet, "
-            "emberi jóváhagyással vagy több aláírós ellenőrzéssel."
+            "a privát aláírókulcsot HSM-ben vagy kulcskezelő szolgáltatásban tartja, "
+            "onnan az nem kerülhet ki. Aláírást csak a kiadási szerver kérhet, "
+            "emberi jóváhagyással vagy többes aláírással."
         ),
-        where="HSM / kulcskezelő szolgáltatás",
+        where="HSM",
         why=(
-            "Ha a privát kulcs kiszivárog, bármely hamis firmware elfogadható lenne "
-            "a valódi gyártói aláírással, ezért a kulcsot a legszigorúbban kell védeni."
+            "Ha a privát kulcs kiszivárog, a támadó bármilyen hamis firmware-t "
+            "el tudna látni érvényes gyártói aláírással, ezért a kulcsot "
+            "a lehető legszigorúbban kell védeni."
         ),
-        progress=10,
     )
 
     private_key, fingerprint, created = ensure_keys(password, log)
@@ -2113,19 +2686,18 @@ def run_pipeline(
     # 3. Manifest és digitális aláírás.
     yield scene(
         stage="signing",
-        title="3. Manifest és digitális aláírás",
+        title="Manifest és digitális aláírás",
+        step=3,
         who="Gyártóvállalat",
         what=(
-            "A kiadási szerver manifestet állít elő, amely tartalmazza a célmodellt, "
-            "a verziót, a kiadás dátumát és a firmware SHA-256 lenyomatát. "
-            "A manifestet a privát kulccsal aláírja."
+            "manifestet állít elő a célmodellel, a verzióval, a kiadás dátumával "
+            "és a firmware SHA-256-lenyomatával, majd a privát kulccsal aláírja."
         ),
         where="manifest",
         why=(
-            "Az aláírás hitelesíti a manifest tartalmát és a firmware-hez való kötését. "
-            "Nem titkosítja a firmware-t."
+            "Az aláírás hitelesíti a manifest tartalmát, és ahhoz köti a firmware-t. "
+            "A firmware-t nem titkosítja."
         ),
-        progress=18,
     )
 
     try:
@@ -2146,23 +2718,22 @@ def run_pipeline(
     log(f"[INFO] Csomagverzió: {version}; dátum: {today}.")
     log(f"[INFO] Firmware SHA-256: {result['expected_hash']}.")
 
-    # 4. Publikálás a frissítési szolgáltatásban.
+    # 4. Közzététel a frissítési szolgáltatásban.
     yield scene(
         stage="delivery",
-        title="4. Publikálás a frissítési szolgáltatásban",
+        title="Közzététel a frissítési szolgáltatásban",
+        step=4,
         who="Gyártóvállalat",
         what=(
-            "A kiadási szolgáltatás a verziózott, aláírt csomagot HTTPS-en "
-            "publikálja a frissítési tárhelyre vagy CDN-re. A közzététel "
-            "fokozatosan (staged rollout) történik: előbb kis tesztcsoport, "
-            "majd szélesebb eszközkör."
+            "a verziózott, aláírt csomagot HTTPS-en közzéteszi a frissítési tárhelyen "
+            "vagy CDN-en. A kiadás fokozatos (staged rollout): először egy kis "
+            "tesztcsoport, azután a többi eszköz kapja meg."
         ),
-        where="frissítési tárhely / CDN",
+        where="frissítési tárhely",
         why=(
             "A fokozatos kiadás korlátozza a hibás frissítés hatását, "
-            "és lehetővé teszi a leállítást, ha probléma derül ki."
+            "és probléma esetén leállítható."
         ),
-        progress=27,
     )
 
     write_bundle(bundle, OUT)
@@ -2172,57 +2743,59 @@ def run_pipeline(
     # 5. Letöltés az eszközön.
     yield scene(
         stage="uploading",
-        title="5. Csomag lekérése az eszközön",
+        title="Csomag letöltése az eszközön",
+        step=5,
         who="Eszköz",
         what=(
-            "Az eszköz frissítési kliense lekéri, hogy van-e elérhető frissítés "
-            "a modelljéhez, majd HTTPS-en letölti a csomagot. Részleges letöltést "
-            "az eszköz nem telepít."
+            "frissítési kliense lekérdezi, van-e frissítés a modelljéhez, majd "
+            "HTTPS-en letölti a csomagot. Részlegesen letöltött csomagot nem telepít."
         ),
         where="frissítési szolgáltatás",
         why=(
             "A TLS védi az átvitelt, de a végső bizalmat a csomag aláírásának "
             "ellenőrzése adja, nem a csatorna."
         ),
-        progress=34,
     )
     log("[INFO] A csomag az eszköz oldalán ellenőrzésre kész.")
 
     # 6. Bootloader-ellenőrzés az eszközön.
     yield scene(
         stage="downloading",
-        title="6. Bootloader-ellenőrzés",
+        title="Bootloader-ellenőrzés",
+        step=6,
         who="Eszköz",
         what=(
-            "A bootloader a gyártásban beégetett publikus kulccsal ellenőrzi "
-            "a manifest aláírását, majd a modellazonosítót, a verziót, "
-            "a firmware méretét és SHA-256 lenyomatát."
+            "bootloadere a gyártáskor beégetett publikus kulcs segítségével "
+            "ellenőrzi a manifest aláírását, majd a modellazonosítót, a verziót, "
+            "a firmware méretét és SHA-256-lenyomatát."
         ),
         where="beégetett publikus kulcs",
         why=(
-            "A publikus kulcsot gyártáskor kell rögzíteni, nem a letöltött "
-            "csomagból elfogadni, különben bármely támadó saját kulcsot adhatna meg."
+            "A publikus kulcsot gyártáskor kell az eszközbe írni, és nem szabad "
+            "a letöltött csomagból átvenni: különben bármely támadó a saját "
+            "kulcsát adhatná meg."
         ),
-        progress=41,
     )
 
     # 7. Csomagellenőrzés.
     yield scene(
         stage="checking",
-        title="7. Csomagellenőrzés",
+        title="Csomagellenőrzés",
+        step=7,
+        sub=0,
+        sub_total=5,
         who="Eszköz",
         what=(
-            "Az eszköz ellenőrzi az aláírást, a csomag felépítését, "
-            "a modellazonosítót, a firmware-méretet, a SHA-256 lenyomatot "
-            "és a verziót. A verziónak nagyobbnak kell lennie az eddigi legmagasabbnál "
-            "(anti-rollback)."
+            "ellenőrzi az aláírást, a csomag felépítését, a modellazonosítót, "
+            "a firmware méretét és SHA-256-lenyomatát, valamint a verziót. "
+            "A verziónak nagyobbnak kell lennie a jelenleg telepítettnél "
+            "(visszalépés elleni védelem)."
         ),
-        where="eszköz oldali ellenőrző",
+        where="",
         why=(
-            "Az anti-rollback megakadályozza, hogy egy régi, sebezhető firmware "
-            "visszatöltődjön, még akkor is, ha az aláírása érvényes."
+            "A visszalépés elleni védelem megakadályozza, hogy egy régi, sebezhető "
+            "firmware visszakerüljön az eszközre, még érvényes aláírás esetén is."
         ),
-        progress=46,
     )
 
     try:
@@ -2245,6 +2818,9 @@ def run_pipeline(
         if result["error_text"]:
             log(f"[INFO] {result['error_text']}")
 
+    # A léptető teljes lépésszáma a nyomvonal hosszától függ.
+    meta["total"] = 17 + len(result["trace"])
+
     log_trace(result["trace"], log)
 
     # Az ellenőrzési lépések részletes megjelenítése.
@@ -2256,25 +2832,28 @@ def run_pipeline(
             index,
             {
                 "title": f"{index}/5 — Ellenőrzés",
-                "what": "Az eszköz ellenőriz egy csomagadatot.",
+                "what": "ellenőriz egy csomagadatot.",
                 "why": "Az ellenőrzési nyomvonal rögzíti az eredményt.",
             },
         )
 
         yield scene(
             stage="checking",
-            title=description["title"],
+            title=description["title"].split("—", 1)[-1].strip(),
+            kicker=f"Ellenőrzés {index}/5",
+            step=7,
+            sub=index,
+            sub_total=5,
             who="Eszköz",
             what=description["what"],
             where="",
             why=description["why"],
             outcome=(
-                "✅ Az ellenőrzés sikeres."
+                "Az ellenőrzés sikeres."
                 if passed
-                else "⛔ Az ellenőrzés sikertelen."
+                else "Az ellenőrzés sikertelen."
             ),
             outcome_ok=passed,
-            progress=min(75, 47 + index * 5),
         )
 
     result["after"] = read_installed_version(STATE)
@@ -2285,49 +2864,52 @@ def run_pipeline(
     if result["error"] is None:
         yield scene(
             stage="accepted",
-            title="8. Telepítés az inaktív partícióra",
+            title="Telepítés az inaktív partícióra",
+            step=8,
             who="Eszköz",
             what=(
-                "A sikeresen ellenőrzött image az inaktív partícióra kerül, "
-                "majd az eszköz újraindul, és az új firmware-t próbaként indítja."
+                "a sikeresen ellenőrzött firmware-képet az inaktív partícióra írja, "
+                "újraindul, és az új firmware-t próbaként indítja."
             ),
             where="inaktív A/B partíció",
             why=(
-                "Ha az új firmware nem indul el helyesen, az eszköz automatikusan "
-                "visszaáll a korábbi, működő partícióra."
+                "Ha az új firmware nem indul el megfelelően, az eszköz automatikusan "
+                "visszavált a korábbi, működő partícióra."
             ),
-            outcome="✅ Az ellenőrzés sikeres, a telepítés elindulhat.",
+            outcome="Az ellenőrzés sikeres, a telepítés elindulhat.",
             outcome_ok=True,
-            progress=78,
         )
     else:
         yield scene(
             stage="error",
-            title="Az ellenőrzés sikertelen, a csomag eldobva",
-            who="Eszköz",
+            title="Az ellenőrzés sikertelen, a csomag elutasítva",
+            step=8,
+            who="",
             what=result["error_text"] or "Az ellenőrző elutasította a csomagot.",
             where="",
-            why="Elutasított csomag után a jelenlegi firmware marad érvényben.",
-            outcome="⛔ A telepítés nem indul el.",
+            why="Elutasított csomag esetén a jelenlegi firmware marad érvényben.",
+            outcome="A telepítés nem indul el.",
             outcome_ok=False,
-            progress=78,
         )
 
     # 9. Módosított csomagok elutasítása.
     yield scene(
         stage="attacker",
-        title="9. Módosított csomagok ellenőrzése",
+        title="Módosított csomagok ellenőrzése",
+        step=9,
+        sub=0,
+        sub_total=5,
         who="Támadó",
         what=(
-            "Módosított firmware, manifest, aláírókulcs és visszalépést célzó "
-            "csomagok érkeznek az eszközhöz, a valódi frissítési csatornán keresztül."
+            "módosított firmware-t, módosított manifestet, idegen kulccsal aláírt "
+            "és régebbi verziójú csomagokat juttat az eszközhöz a valódi "
+            "frissítési csatornán keresztül."
         ),
-        where="eszköz oldali ellenőrző",
+        where="",
         why=(
             "A cél annak igazolása, hogy az aláírás-, tartalom-, modell- "
             "és verzióellenőrzés mindegyiket elutasítja."
         ),
-        progress=80,
     )
 
     attack_iterator = iter(
@@ -2354,43 +2936,47 @@ def run_pipeline(
         scenario_title = scenario["title"]
 
         if passed:
-            outcome = "✅ Az ellenőrző elutasította a módosított csomagot."
+            outcome = "Az ellenőrző elutasította a módosított csomagot."
             log(f"[OK] {index}/5 — {scenario_title}: elutasítva.")
         elif actual == "accepted":
-            outcome = "❌ A módosított csomag átment az ellenőrzésen."
+            outcome = "A módosított csomag átment az ellenőrzésen."
             log(f"[HIBA] {index}/5 — {scenario_title}: elfogadva.")
         else:
-            outcome = "⚠️ A kapott eredmény eltér a várt eredménytől."
+            outcome = "A kapott eredmény eltér a várt eredménytől."
             log(f"[FIGYELEM] {index}/5 — {scenario_title}: ellenőrizendő.")
 
         yield scene(
             stage="attacker",
-            title=f"Teszt {index}/5 — {scenario_title}",
-            who="Támadó",
+            title=scenario_title,
+            kicker=f"Támadási próba {index}/5",
+            step=9,
+            sub=index,
+            sub_total=5,
+            who="",
             what=build_attack_sentence(scenario),
             where="",
             why="",
             outcome=outcome,
             outcome_ok=passed,
-            progress=min(91, 80 + index * 2),
         )
 
     # 10. Kulcsjelszó-ellenőrzés (csak a helyi kulcsra).
     yield scene(
         stage="bruteforce",
-        title="10. Kulcsjelszó-ellenőrzés",
+        title="Kulcsjelszó-ellenőrzés",
+        step=10,
         who="Támadó",
         what=(
-            "Gyenge vagy újrahasznált jelszavakkal szemben próbálkozik a "
-            "helyi kulcs megnyitásával. Éles környezetben a kulcs HSM-ben van, "
-            "így ilyen támadás nem férhet hozzá."
+            "gyenge vagy újrahasznált jelszavakkal próbálja megnyitni a helyi "
+            "kulcsfájlt. Éles környezetben a kulcs HSM-ben van, ahol ilyen "
+            "támadás nem fér hozzá."
         ),
         where="helyi kulcsfájl",
         why=(
-            "A kulcs védelme csak a jelszó erősségétől és a hozzáférés-korlátozástól "
-            "függ, ezért HSM-et vagy kulcskezelőt használunk éles rendszerben."
+            "A jelszóval védett kulcs csak annyira biztonságos, amilyen erős "
+            "a jelszó és amilyen szigorú a hozzáférés-korlátozás, ezért éles "
+            "rendszerben HSM-et vagy kulcskezelő szolgáltatást használunk."
         ),
-        progress=92,
     )
 
     password_attack = run_automatic_password_attack(
@@ -2405,31 +2991,28 @@ def run_pipeline(
         yield scene(
             stage="bruteforce-success",
             title="A helyi kulcs jelszava megtalálható volt",
+            step=10,
             who="Támadó",
-            what="Az egyik kipróbált jelölt megnyitotta a helyi kulcsot.",
-            where="helyi kulcsfájl",
+            what="egy kipróbált jelölttel megnyitotta a helyi kulcsot.",
+            where="helyi kulcs",
             why="A gyakori vagy újrahasznált jelszó gyengíti a kulcs védelmét.",
             outcome=f"Találat: {found_password}",
             outcome_ok=False,
-            progress=98,
         )
     else:
         yield scene(
             stage="bruteforce-failed",
             title="A kulcsjelszó-próba befejeződött",
+            step=10,
             who="Támadó",
-            what=(
-                f"A folyamat {password_attack['attempts']} jelöltet próbált "
-                "a helyi kulcsfájlon."
-            ),
+            what=f"{password_attack['attempts']} jelöltet próbált ki a helyi kulcsfájlon.",
             where="helyi kulcsfájl",
             why=(
-                "Az eredmény csak a kipróbált jelöltekre vonatkozik; "
-                "nem igazolja, hogy minden lehetséges jelszó sikertelen lenne."
+                "Az eredmény csak a kipróbált jelöltekre érvényes; nem bizonyítja, "
+                "hogy minden lehetséges jelszó sikertelen lenne."
             ),
             outcome="A kipróbált jelöltek között nem volt találat.",
             outcome_ok=True,
-            progress=98,
         )
 
     firmware_test_count = 1 + len(ATTACK_SCENARIOS)
@@ -2443,11 +3026,10 @@ def run_pipeline(
     overall_ok = firmware_tests_ok and not password_attack["found"]
 
     if password_attack["found"]:
-        password_summary = "A helyi kulcs jelszavára talált egyező jelöltet."
+        password_summary = "A helyi kulcs jelszavát sikerült kitalálni."
     else:
         password_summary = (
-            f"{password_attack['attempts']} helyi jelölt között "
-            "nem volt találat."
+            f"{password_attack['attempts']} helyi jelölt között nem volt találat."
         )
 
     log(
@@ -2459,7 +3041,8 @@ def run_pipeline(
     yield scene(
         stage="done",
         title="A folyamat összesítése",
-        who="Összesítés",
+        step=11,
+        who="",
         what=(
             f"{firmware_pass_count}/{firmware_test_count} csomagellenőrzési "
             f"teszt sikeres. {password_summary}"
@@ -2469,9 +3052,14 @@ def run_pipeline(
             "Az aláírás, a manifest, a lenyomat, a verzióellenőrzés és a "
             "kulcsvédelem együtt alkotja a védelmi láncot."
         ),
+        outcome=(
+            "Minden vizsgálat rendben."
+            if overall_ok
+            else "Van kezelendő eredmény."
+        ),
         outcome_ok=overall_ok,
-        progress=100,
     )
+
 
 # ---------------------------------------------------------------------
 # Képernyőfrissítések
@@ -2484,37 +3072,26 @@ def present(
     who: str,
     what: str,
     where: str,
-    progress: int,
     why: str = "",
     outcome: str = "",
     outcome_ok: bool = True,
-    hold_seconds: float | None = None,
 ) -> None:
-    """Frissíti a jelenetet, majd olvasási időt hagy a képernyőn."""
+    """Azonnal kirajzol egy jelenetet a folyamaton kívül (hiba, nullázás)."""
 
-    story = {
-        "stage": stage,
-        "title": title,
-        "who": who,
-        "what": what,
-        "where": where,
-        "why": why,
-        "outcome": outcome,
-        "outcome_ok": outcome_ok,
-    }
+    story = scene(
+        stage=stage,
+        title=title,
+        who=who,
+        what=what,
+        where=where,
+        why=why,
+        outcome=outcome,
+        outcome_ok=outcome_ok,
+    )
 
     st.session_state["story_state"] = story
-    safe_progress = max(0, min(100, int(progress)))
-
-    st.session_state["story_progress"] = safe_progress
     draw_story(story_placeholder, story)
-    progress_bar.progress(safe_progress, text=title)
-
-    if hold_seconds is None:
-        hold_seconds = 0 if stage == "idle" else STEP_SECONDS
-
-    if hold_seconds > 0:
-        time.sleep(hold_seconds)
+    draw_stepper(stepper_placeholder, None)
 
 
 def show_guess(
@@ -2542,62 +3119,142 @@ def show_guess(
     )
 
     brute_guess_placeholder.markdown(markup, unsafe_allow_html=True)
-
-    if phase.startswith("Szólista") or phase.startswith("Kiegészítő"):
-        progress = min(97, 92 + int(5 * attempt / max(total, 1)))
-        progress_text = f"{phase}: {attempt}/{total}"
-    else:
-        progress = int(100 * attempt / max(total, 1))
-        progress_text = f"{phase}: {attempt}/{total}"
-
-    progress_bar.progress(progress, text=progress_text)
     time.sleep(AUTO_ATTACK_DELAY_SECONDS)
 
 
+def go_back() -> None:
+    """Vissza a már látott jelenetre (gomb-callback)."""
+    idx = st.session_state.get("scene_index", 0)
+    st.session_state["scene_index"] = max(0, idx - 1)
+
+
+def request_advance() -> None:
+    """A Következő gomb jelzi, hogy a folyamat egy lépést haladjon."""
+    st.session_state["advance"] = True
+
+def show_finale() -> None:
+    """Az utolsó lépés után a záróképernyő jelenik meg."""
+    st.session_state["finale"] = True
+
+
+def hide_finale() -> None:
+    st.session_state["finale"] = False
+
+
+def draw_finale() -> None:
+    """Teljes oldalas záróképernyő; minden mást elfed."""
+
+    def letters(text: str) -> str:
+        return "".join(
+            f'<span style="--i:{i}">'
+            f'{"&nbsp;" if ch == " " else html.escape(ch)}</span>'
+            for i, ch in enumerate(text)
+        )
+
+    words = "".join(
+        f'<span style="--i:{i}">{html.escape(word)}</span>'
+        for i, word in enumerate("Köszönöm a figyelmet!".split())
+    )
+
+    particles = "".join(
+        f'<i style="--x:{(i * 37) % 100}%;--d:{6 + (i * 7) % 7}s;'
+        f'--s:{(i * 3) % 5}s;--z:{3 + (i * 5) % 6}px"></i>'
+        for i in range(28)
+    )
+
+    st.markdown(
+        '<div class="finale">'
+        '<div class="finale-grid"></div>'
+        f'<div class="finale-particles">{particles}</div>'
+        '<div class="finale-core">'
+        '<div class="finale-badge">'
+        '<span class="finale-ring"></span>'
+        '<span class="finale-ring r2"></span>'
+        f'{icon("shield", 54)}'
+        "</div>"
+        f'<div class="finale-title">{words}</div>'
+        '<div class="finale-rule"></div>'
+        '<div class="finale-by">Készítette</div>'
+        f'<div class="finale-name">{letters("Kiss Szilárd Attila")}</div>'
+        "</div>"
+        "</div>",
+        unsafe_allow_html=True,
+    )
+    st.button("← Vissza", key="finale_back", on_click=hide_finale)
+    
+    
 # ---------------------------------------------------------------------
 # Felület
 # ---------------------------------------------------------------------
 
 inject_css()
 
-st.markdown(
-    """
-    <div class="hero">
-      <div class="hero-copy">
-        <div class="hero-kicker">ALÁÍRÁS · ELLENŐRZÉS · TÁMADÁSI PRÓBÁK</div>
-        <h1>Biztonságos firmware-frissítés</h1>
-        <p>
-          Kövesd a csomag útját a gyártótól az eszközig,
-          nézd meg az ellenőrzéseket és az öt támadási próbát.
-        </p>
-      </div>
-      <div class="hero-side">
-        <div class="hero-chip"><span class="hero-chip-dot"></span>HELYI TESZTKÖRNYEZET</div>
-        <div class="hero-chip">📟 ESZKÖZMODELL · demo-device</div>
-        <div class="hero-chip">⏱️ LÉPÉSEK · {STEP_SECONDS} MÁSODPERC</div>
-      </div>
-    </div>
-    """,
-    unsafe_allow_html=True,
-)
+if st.session_state.get("finale"):
+    draw_finale()
 
-st.markdown(
-    '<div class="section-heading">'
-    "<h2>Frissítés indítása</h2>"
-    '<span class="section-hint">Firmware-fájl + aláírókulcs-jelszó</span>'
+try:
+    installed_version = read_installed_version(STATE)
+except Exception:
+    installed_version = 0
+
+head_left, head_mid, head_right = st.columns([5, 3, 1.3], gap="medium")
+
+head_left.markdown(
+    '<div class="brand">'
+    f'<div class="brand-icon">{icon("shield", 22)}</div>'
+    "<div>"
+    "<h1>Biztonságos firmware-frissítés</h1>"
+    '<div class="brand-sub">Az aláírt csomag útja a gyártótól az eszközig, '
+    "ellenőrzésekkel és öt támadási próbával.</div>"
+    "</div>"
     "</div>",
     unsafe_allow_html=True,
 )
 
+head_mid.markdown(
+    '<div class="meta">'
+    f"<span>modell<b>{html.escape(DEVICE_MODEL)}</b></span>"
+    f"<span>telepítve<b>v{installed_version}</b></span>"
+    "</div>",
+    unsafe_allow_html=True,
+)
+
+with head_right:
+    if hasattr(st, "popover"):
+        reset_box = st.popover("↺ Nullázás", use_container_width=True)
+    else:
+        reset_box = st.expander("↺ Nullázás", expanded=False)
+
+    with reset_box:
+        st.warning(
+            "Törli a teljes keys/ mappát, és 0-ra állítja a helyi eszközverziót."
+        )
+
+        confirm_reset = st.checkbox(
+            "Megerősítem a kulcsok törlését",
+            key="confirm_reset",
+        )
+
+        reset_button = st.button(
+            "Demóállapot nullázása",
+            disabled=not confirm_reset,
+            key="reset_demo",
+        )
+
+        reset_feedback = st.empty()
+
+st.markdown('<div style="height:.6rem"></div>', unsafe_allow_html=True)
+
+started_before = bool(st.session_state.get("scenes"))
+
 with st.form("update_form", clear_on_submit=False):
-    input_file_col, password_col, action_col = st.columns(
-        [1.25, 1, 0.8],
-        gap="large",
+    file_col, password_col, action_col = st.columns(
+        [1.6, 1.2, 0.55],
+        gap="medium",
     )
 
-    firmware_file = input_file_col.file_uploader(
+    firmware_file = file_col.file_uploader(
         "Firmware-fájl",
-        help="A kiválasztott fájlt a program bájtokként olvassa be.",
         key="firmware_upload",
     )
 
@@ -2611,101 +3268,61 @@ with st.form("update_form", clear_on_submit=False):
         key="signing_password",
     )
 
-    action_col.markdown(
-        '<div class="section-kicker">INDÍTÁS</div>',
-        unsafe_allow_html=True,
-    )
+    action_col.markdown('<div class="btn-spacer"></div>', unsafe_allow_html=True)
     run_demo = action_col.form_submit_button(
-        "Frissítés és támadási próbák",
+        "↻ Újraindítás" if started_before else "▶ Indítás",
         type="primary",
         use_container_width=True,
     )
 
-    st.caption(
-        f"Modell: {DEVICE_MODEL} · "
-        f"A csomag az out/ mappába kerül · "
-        f"A helyi verzió a device/device_state.json fájlban tárolódik."
-    )
+st.markdown('<div style="height:.5rem"></div>', unsafe_allow_html=True)
 
+stepper_col, story_col, terminal_col = st.columns(
+    [0.95, 2.6, 1.2],
+    gap="large",
+)
 
-# Az animáció és a terminál ugyanabban a desktop nézetben marad.
-story_col, terminal_col = st.columns([1.65, 1], gap="large")
+with stepper_col:
+    stepper_placeholder = st.empty()
 
 with story_col:
-    st.markdown(
-        '<div class="section-heading">'
-        "<h2>Élő folyamat</h2>"
-        '<span class="section-hint">Gyártó → internet → eszköz</span>'
-        "</div>",
-        unsafe_allow_html=True,
-    )
-
-    progress_bar = st.progress(
-        int(st.session_state.get("story_progress", 0)),
-        text="Várakozás a bemenetekre",
-    )
-
     story_placeholder = st.empty()
     brute_guess_placeholder = st.empty()
 
-    default_story = {
-        "stage": "idle",
-        "title": "Készen állunk",
-        "who": "",
-        "what": "Válassz firmware-fájlt és add meg a kulcs jelszavát.",
-        "where": "",
-        "why": "A program megmutatja az aláírást, az ellenőrzést és a támadási próbákat.",
-        "outcome": "",
-        "outcome_ok": True,
-    }
-
-    current_story = st.session_state.get("story_state", default_story)
-    draw_story(story_placeholder, current_story)
-
 with terminal_col:
-    st.markdown(
-        '<div class="panel-heading">'
-        "<strong>Technikai események</strong>"
-        '<span class="panel-live">ÉLŐ NAPLÓ</span>'
-        "</div>",
-        unsafe_allow_html=True,
-    )
-
     terminal_placeholder = st.empty()
     terminal = Terminal(terminal_placeholder)
 
+default_story = scene(
+    stage="idle",
+    title="Készen állunk",
+    who="",
+    what="Válassz firmware-fájlt, és add meg a kulcs jelszavát.",
+    where="",
+    why="A program megmutatja az aláírást, az ellenőrzést és a támadási próbákat.",
+)
 
-# ---------------------------------------------------------------------
-# Kulcsok és helyi verzió nullázása
-# ---------------------------------------------------------------------
-
-with st.expander("Haladó: kulcsok és helyi verzió nullázása", expanded=False):
-    st.warning(
-        "Törli a teljes keys/ mappát, és 0-ra állítja a helyi eszközverziót."
-    )
-
-    confirm_reset = st.checkbox(
-        "Megerősítem a kulcsok törlését",
-        key="confirm_reset",
-    )
-
-    reset_button = st.button(
-        "Demóállapot nullázása",
-        disabled=not confirm_reset,
-        key="reset_demo",
-    )
-
-    reset_feedback = st.empty()
+draw_story(story_placeholder, st.session_state.get("story_state", default_story))
+draw_stepper(stepper_placeholder, None)
 
 
 # ---------------------------------------------------------------------
 # Gombműveletek
 # ---------------------------------------------------------------------
 
+# A generátor több futáson át él, ezért a naplózó és a jelszópróba-megjelenítő
+# függvényt mindig az aktuális futásból kell elérnie.
+ctx = st.session_state.setdefault("ctx", {})
+ctx["log"] = terminal.write
+ctx["guess"] = show_guess
+
+
 if run_demo:
+    st.session_state["pipeline"] = None
+    st.session_state.pop("scenes", None)
+    st.session_state.pop("scene_index", None)
     terminal.clear()
     brute_guess_placeholder.empty()
-    progress_bar.progress(0, text="A frissítés indul")
     terminal.write("[INFO] Új firmware-frissítés indul.")
 
     if firmware_file is None or not signing_password:
@@ -2721,7 +3338,6 @@ if run_demo:
             why="A csomag elkészítéséhez fájlra és jelszóra van szükség.",
             outcome="Javítsd a bemeneteket, majd próbáld újra.",
             outcome_ok=False,
-            progress=0,
         )
     else:
         try:
@@ -2733,31 +3349,19 @@ if run_demo:
             if not firmware_bytes:
                 raise ValueError("A kiválasztott firmware-fájl üres.")
 
-            scenes: list[dict[str, Any]] = []
-            pipeline = run_pipeline(
+            meta = {"total": 22}
+            st.session_state["meta"] = meta
+            st.session_state["pipeline"] = run_pipeline(
                 firmware_bytes,
                 signing_password,
                 firmware_file.name,
-                terminal.write,
-                show_guess,
+                lambda message: ctx["log"](message),
+                lambda *args, **kwargs: ctx["guess"](*args, **kwargs),
+                meta,
             )
-
-            for current_scene in pipeline:
-                scenes.append(current_scene)
-
-                st.session_state["story_state"] = current_scene
-                st.session_state["story_progress"] = current_scene["progress"]
-
-                draw_story(story_placeholder, current_scene)
-                progress_bar.progress(
-                    current_scene["progress"],
-                    text=current_scene["title"],
-                )
-
-                time.sleep(STEP_SECONDS)
-
-            st.session_state["scenes"] = scenes
-            st.session_state["scene_index"] = max(0, len(scenes) - 1)
+            st.session_state["scenes"] = []
+            st.session_state["scene_index"] = 0
+            st.session_state["advance"] = True  # az 1. lépés megjelenítése
 
         except (OSError, ValueError) as exc:
             message = str(exc)
@@ -2766,16 +3370,15 @@ if run_demo:
             present(
                 stage="error",
                 title="A folyamat leállt",
-                who="Helyi program",
+                who="",
                 what=message,
-                where="frissítési folyamat",
+                where="",
                 why="A program nem tudta folytatni a műveletet.",
                 outcome=(
                     "Ellenőrizd a fájlt, a jelszót "
                     "és a mappajogosultságokat."
                 ),
                 outcome_ok=False,
-                progress=0,
             )
 
         except Exception as exc:
@@ -2785,13 +3388,12 @@ if run_demo:
             present(
                 stage="error",
                 title="Váratlan hiba történt",
-                who="Helyi program",
+                who="",
                 what=message,
-                where="frissítési folyamat",
+                where="",
                 why="A folyamat nem tudott rendben befejeződni.",
                 outcome="A részleteket a technikai napló tartalmazza.",
                 outcome_ok=False,
-                progress=0,
             )
 
 
@@ -2808,6 +3410,10 @@ if reset_button:
         STATE.parent.mkdir(parents=True, exist_ok=True)
         write_installed_version(STATE, 0)
 
+        st.session_state["pipeline"] = None
+        st.session_state.pop("scenes", None)
+        st.session_state.pop("scene_index", None)
+
         reset_feedback.success(
             "A keys/ mappa törölve, a helyi verzió 0-ra állítva."
         )
@@ -2822,7 +3428,6 @@ if reset_button:
             why="A következő indítás új aláírókulcsot készít.",
             outcome="Újraindíthatod a frissítési folyamatot.",
             outcome_ok=True,
-            progress=0,
         )
 
     except OSError as exc:
@@ -2832,33 +3437,89 @@ if reset_button:
             f"Nem sikerült a nullázás: {type(exc).__name__}."
         )
 
-if "scenes" in st.session_state and st.session_state["scenes"]:
+
+# ---------------------------------------------------------------------
+# Kézi léptetés
+# ---------------------------------------------------------------------
+
+if st.session_state.pop("advance", False):
+    shown = st.session_state.setdefault("scenes", [])
+    position = st.session_state.get("scene_index", 0)
+    pipeline = st.session_state.get("pipeline")
+
+    if shown and position < len(shown) - 1:
+        # Már látott jelenet újranézése, a folyamat nem halad.
+        st.session_state["scene_index"] = position + 1
+    elif pipeline is not None:
+        # Itt fut le a következő lépés kódja (a jelszópróbánál élő animációval).
+        try:
+            shown.append(next(pipeline))
+            st.session_state["scene_index"] = len(shown) - 1
+        except StopIteration:
+            st.session_state["pipeline"] = None
+        except Exception as exc:
+            message = str(exc) or type(exc).__name__
+            terminal.write(f"[HIBA] {type(exc).__name__}: {message}")
+            shown.append(
+                scene(
+                    stage="error",
+                    title="A folyamat leállt",
+                    step=shown[-1]["step"] if shown else 0,
+                    who="",
+                    what=message,
+                    where="",
+                    why="A program nem tudta folytatni a műveletet.",
+                    outcome="Nullázd a demót, vagy add meg a helyes jelszót, majd indítsd újra.",
+                    outcome_ok=False,
+                )
+            )
+            st.session_state["scene_index"] = len(shown) - 1
+            st.session_state["pipeline"] = None
+
+        brute_guess_placeholder.empty()
+
+
+if st.session_state.get("scenes"):
     scenes = st.session_state["scenes"]
-    idx = st.session_state.get("scene_index", 0)
-    idx = max(0, min(idx, len(scenes) - 1))
+    idx = max(0, min(st.session_state.get("scene_index", 0), len(scenes) - 1))
     st.session_state["scene_index"] = idx
     current = scenes[idx]
 
-    progress_bar.progress(current["progress"], text=current["title"])
-    draw_story(story_placeholder, current)
+    draw_story(story_placeholder, current, fx=idx)
+    draw_stepper(stepper_placeholder, current)
 
-    prev_col, counter_col, next_col = st.columns([1, 2, 1])
-    if prev_col.button("← Előző", disabled=idx == 0, key="scene_prev"):
-        st.session_state["scene_index"] = idx - 1
-        st.rerun()
-    counter_col.markdown(
-        f"<div style='text-align:center'>{idx + 1} / {len(scenes)}</div>",
-        unsafe_allow_html=True,
+    total = max(
+        len(scenes),
+        int(st.session_state.get("meta", {}).get("total", len(scenes))),
     )
-    if next_col.button("Következő →", disabled=idx == len(scenes) - 1, key="scene_next"):
-        st.session_state["scene_index"] = idx + 1
-        st.rerun()
-        
-        
-        
-st.markdown(
-    '<div class="footer-note">'
-    "GYÁRTÓ → INTERNET → ESZKÖZ · ALÁÍRÁS · ELLENŐRZÉS · TÁMADÁSI PRÓBÁK"
-    "</div>",
-    unsafe_allow_html=True,
-)
+
+    on_done = idx == len(scenes) - 1 and current["stage"] == "done"
+    at_end = (
+        idx == len(scenes) - 1
+        and not on_done
+        and st.session_state.get("pipeline") is None
+    )
+    with story_col:
+        st.markdown('<div class="nav-rule"></div>', unsafe_allow_html=True)
+
+        prev_col, counter_col, next_col = st.columns([1, 1, 1.15])
+
+        prev_col.button(
+            "← Előző",
+            disabled=idx == 0,
+            key="scene_prev",
+            on_click=go_back,
+            use_container_width=True,
+        )
+        counter_col.markdown(
+            f'<div class="counter">{idx + 1} / {total}</div>',
+            unsafe_allow_html=True,
+        )
+        next_col.button(
+            "Befejezés →" if on_done else "Következő lépés →",
+            disabled=at_end,
+            key="scene_next",
+            type="primary",
+            on_click=show_finale if on_done else request_advance,
+            use_container_width=True,
+        )

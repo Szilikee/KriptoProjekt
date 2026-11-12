@@ -1,7 +1,7 @@
 {
   "kdf": "scrypt",
   "cipher": "AES-256-GCM",
-  "salt": "y2Iqc2yOjujrO40GPmEkAg==",
-  "nonce": "d3E3QLSYngd3n38B",
-  "ciphertext": "zm69/qL4KjS2r4Eb0oA90V31BDgMO4U/9PbvVl10VzE1mChXDvd6Pw7eHHe0sDnC"
+  "salt": "L6hfoYPO1gfFGMEAlNwT4Q==",
+  "nonce": "TCEZCzhARA/+9laj",
+  "ciphertext": "HgTYHXdZm1C98m78c30N9Bu6Ph5eVan2Idem1nR83mVQjKU+eVrSz3LM4FCiCn7D"
 }

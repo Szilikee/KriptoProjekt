@@ -1,10 +1,10 @@
 {
   "format_version": 1,
   "device_model": "demo-device",
-  "version": 12,
-  "version_str": "12.0",
-  "release_date": "2026-11-02",
-  "firmware_size": 69516,
-  "firmware_sha256": "d71ca25fb1c9b4a4e1b8f1579cc16a0fd7cae743fd91bbe0f7900cdad0f9e7e8",
-  "signature": "Cm4fzJnJcuA+gecZlae6vNGF6K/gzDuNA6ldyT3U4MI/S9donWCdgQR3KdRnCIR4+fPJxf3TpSkjWGul65tyBQ=="
+  "version": 2,
+  "version_str": "2.0",
+  "release_date": "2026-11-12",
+  "firmware_size": 195362,
+  "firmware_sha256": "418061844f113c7df67911207c171048a5034ddd3816075534ee322d9424d8da",
+  "signature": "1Y5b6mnQWls6YVZS5IpVb8vsIBWGdJT7AfZF4NwfdzmSICC+qHFKjuDOMeslIv0gDmyt1/Up9//nw2X6oeDaAQ=="
 }
