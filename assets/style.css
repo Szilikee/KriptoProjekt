@@ -1,0 +1,439 @@
+:root {
+  color-scheme: dark;
+
+  --lab-bg: #07111f;
+  --lab-panel: #0d1a2b;
+  --lab-panel-soft: #112239;
+  --lab-text: #e8eef8;
+  --lab-muted: #9aabc2;
+  --lab-border: rgba(148, 163, 184, 0.18);
+  --lab-cyan: #67e8f9;
+  --lab-violet: #a78bfa;
+  --lab-green: #34d399;
+  --lab-red: #fb7185;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body,
+.stApp {
+  color: var(--lab-text);
+  font-family: Inter, "Segoe UI", system-ui, sans-serif;
+}
+
+.stApp {
+  min-height: 100vh;
+  background:
+    radial-gradient(ellipse at 12% 0%, rgba(14, 116, 144, 0.20), transparent 34rem),
+    radial-gradient(ellipse at 92% 12%, rgba(109, 40, 217, 0.16), transparent 31rem),
+    linear-gradient(180deg, #07111f 0%, #091525 55%, #070f1c 100%);
+}
+
+[data-testid="stAppViewContainer"],
+[data-testid="stMain"] {
+  background: transparent;
+}
+
+[data-testid="stHeader"] {
+  background: rgba(7, 17, 31, 0.72);
+  backdrop-filter: blur(14px);
+}
+
+main .block-container {
+  max-width: 1180px;
+  padding: 2.2rem 1.7rem 4rem;
+}
+
+/* Főcím */
+.hero {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  margin-bottom: 1.5rem;
+  padding: clamp(2rem, 5vw, 3.4rem);
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 28px;
+  background:
+    radial-gradient(circle at 84% 18%, rgba(103, 232, 249, 0.12), transparent 22rem),
+    radial-gradient(circle at 5% 100%, rgba(167, 139, 250, 0.12), transparent 25rem),
+    linear-gradient(135deg, rgba(15, 31, 51, 0.98), rgba(8, 18, 32, 0.96));
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.28);
+}
+
+.hero::after {
+  position: absolute;
+  z-index: -1;
+  top: -115px;
+  right: -70px;
+  width: 330px;
+  height: 330px;
+  border: 1px solid rgba(103, 232, 249, 0.14);
+  border-radius: 50%;
+  box-shadow:
+    0 0 0 35px rgba(103, 232, 249, 0.025),
+    0 0 0 70px rgba(167, 139, 250, 0.025);
+  content: "";
+  pointer-events: none;
+}
+
+.hero > * {
+  position: relative;
+  z-index: 1;
+}
+
+.hero-kicker {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  color: #9fb2ca;
+  font-size: 0.72rem;
+  font-weight: 750;
+  letter-spacing: 0.17em;
+}
+
+.hero-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--lab-green);
+  box-shadow: 0 0 14px rgba(52, 211, 153, 0.8);
+}
+
+.hero h1 {
+  margin: 1rem 0 1.1rem;
+  background: linear-gradient(100deg, #ffffff 0%, #c8f3ff 52%, #c4b5fd 100%);
+  background-clip: text;
+  color: transparent;
+  font-size: clamp(2.7rem, 6vw, 4.6rem);
+  font-weight: 780;
+  letter-spacing: -0.055em;
+  line-height: 1.02;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.hero p {
+  max-width: 690px;
+  margin: 0;
+  color: #b0bfd2;
+  font-size: 1.02rem;
+  line-height: 1.75;
+}
+
+.hero-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  margin-top: 1.6rem;
+}
+
+.hero-chip {
+  padding: 0.45rem 0.72rem;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.045);
+  color: #c8d6e8;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.11em;
+}
+
+/* Szekciócímek és általános szöveg */
+[data-testid="stMarkdownContainer"] {
+  color: var(--lab-text);
+}
+
+[data-testid="stMarkdownContainer"] p {
+  color: var(--lab-muted);
+  line-height: 1.65;
+}
+
+[data-testid="stMarkdownContainer"] strong,
+[data-testid="stMarkdownContainer"] h2,
+[data-testid="stMarkdownContainer"] h3,
+[data-testid="stMarkdownContainer"] h4 {
+  color: var(--lab-text);
+}
+
+[data-testid="stMarkdownContainer"] h2 {
+  margin-top: 1.6rem;
+  margin-bottom: 0.8rem;
+  font-size: 1.65rem;
+  font-weight: 750;
+  letter-spacing: -0.035em;
+}
+
+[data-testid="stMarkdownContainer"] h3 {
+  font-size: 1.15rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+[data-testid="stMarkdownContainer"] h4 {
+  margin-bottom: 0.8rem;
+  font-size: 1.03rem;
+  font-weight: 730;
+  letter-spacing: -0.015em;
+}
+
+.mini-label {
+  display: inline-flex;
+  align-items: center;
+  margin-bottom: 0.9rem;
+  padding: 0.36rem 0.65rem;
+  border: 1px solid rgba(103, 232, 249, 0.22);
+  border-radius: 999px;
+  background: rgba(103, 232, 249, 0.07);
+  color: #a5f3fc;
+  font-size: 0.69rem;
+  font-weight: 750;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+/* Keretes konténerek és tesztkártyák */
+[data-testid="stVerticalBlockBorderWrapper"] {
+  overflow: hidden;
+  border: 1px solid var(--lab-border) !important;
+  border-radius: 21px !important;
+  background:
+    linear-gradient(145deg, rgba(16, 33, 54, 0.94), rgba(10, 23, 39, 0.96)) !important;
+  box-shadow: 0 14px 38px rgba(0, 0, 0, 0.17);
+  transition:
+    border-color 180ms ease,
+    box-shadow 180ms ease;
+}
+
+[data-testid="stVerticalBlockBorderWrapper"]:hover {
+  border-color: rgba(103, 232, 249, 0.29) !important;
+  box-shadow: 0 16px 42px rgba(0, 0, 0, 0.24);
+}
+
+/* Űrlapmezők */
+[data-testid="stWidgetLabel"] p {
+  color: #d8e2ef !important;
+  font-size: 0.88rem;
+  font-weight: 650;
+}
+
+[data-testid="stTextInput"] [data-baseweb="input"] {
+  overflow: hidden;
+  border: 1px solid rgba(148, 163, 184, 0.23) !important;
+  border-radius: 12px !important;
+  background: rgba(5, 15, 28, 0.62) !important;
+}
+
+[data-testid="stTextInput"] [data-baseweb="input"]:focus-within {
+  border-color: rgba(103, 232, 249, 0.75) !important;
+  box-shadow: 0 0 0 3px rgba(103, 232, 249, 0.11);
+}
+
+[data-testid="stTextInput"] input {
+  color: var(--lab-text) !important;
+  background: transparent !important;
+}
+
+/* Fájlfeltöltő */
+[data-testid="stFileUploaderDropzone"] {
+  border: 1px dashed rgba(148, 163, 184, 0.36) !important;
+  border-radius: 15px !important;
+  background: rgba(5, 15, 28, 0.43) !important;
+  transition:
+    border-color 180ms ease,
+    background 180ms ease;
+}
+
+[data-testid="stFileUploaderDropzone"]:hover {
+  border-color: rgba(103, 232, 249, 0.72) !important;
+  background: rgba(103, 232, 249, 0.045) !important;
+}
+
+[data-testid="stFileUploaderDropzone"] p {
+  color: var(--lab-muted) !important;
+}
+
+[data-testid="stFileUploaderDropzone"] button {
+  border: 1px solid rgba(103, 232, 249, 0.3) !important;
+  border-radius: 9px !important;
+  background: rgba(103, 232, 249, 0.09) !important;
+  color: #b9f5ff !important;
+}
+
+/* Gombok */
+.stButton > button {
+  min-height: 2.9rem;
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.055);
+  color: var(--lab-text);
+  font-weight: 720;
+  transition:
+    transform 160ms ease,
+    box-shadow 160ms ease,
+    filter 160ms ease;
+}
+
+.stButton > button:hover {
+  transform: translateY(-1px);
+  border-color: rgba(103, 232, 249, 0.55);
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.2);
+}
+
+.stButton > button[kind="primary"],
+.stButton > button[data-testid="stBaseButton-primary"] {
+  border: 0 !important;
+  background: linear-gradient(100deg, #67e8f9 0%, #7dd3fc 52%, #a5b4fc 100%) !important;
+  box-shadow: 0 9px 25px rgba(34, 211, 238, 0.18);
+  color: #07111f !important;
+}
+
+.stButton > button[kind="primary"]:hover,
+.stButton > button[data-testid="stBaseButton-primary"]:hover {
+  filter: brightness(1.07);
+  box-shadow: 0 12px 30px rgba(34, 211, 238, 0.26);
+}
+
+/* Eredménykártyák */
+[data-testid="stMetric"] {
+  min-height: 100%;
+  padding: 0.95rem 1rem;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 15px;
+  background: rgba(255, 255, 255, 0.035);
+}
+
+[data-testid="stMetricLabel"] {
+  color: var(--lab-muted) !important;
+  font-size: 0.76rem;
+  font-weight: 650;
+}
+
+[data-testid="stMetricLabel"] p {
+  color: var(--lab-muted) !important;
+}
+
+[data-testid="stMetricValue"] {
+  color: #f2f7ff !important;
+  font-size: 1.55rem;
+  font-weight: 760;
+  letter-spacing: -0.035em;
+  overflow-wrap: anywhere;
+}
+
+/* Siker / hiba / információs üzenetek */
+[data-testid="stAlert"] {
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 14px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+}
+
+/* Ellenőrzési nyomvonal */
+.trace-strip {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 0.5rem;
+  margin: 0.4rem 0 1.15rem;
+}
+
+.trace-segment {
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.2);
+}
+
+.trace-segment.ok {
+  background: linear-gradient(90deg, #34d399, #22d3ee);
+  box-shadow: 0 0 12px rgba(52, 211, 153, 0.18);
+}
+
+.trace-segment.fail {
+  background: linear-gradient(90deg, #fb7185, #f97316);
+  box-shadow: 0 0 12px rgba(251, 113, 133, 0.2);
+}
+
+/* Táblázat */
+[data-testid="stDataFrame"] {
+  overflow: hidden;
+  border: 1px solid rgba(148, 163, 184, 0.17);
+  border-radius: 14px;
+}
+
+/* Kinyitható technikai magyarázatok */
+[data-testid="stExpander"] {
+  overflow: hidden;
+  border: 1px solid rgba(148, 163, 184, 0.17);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.025);
+}
+
+[data-testid="stExpander"] summary {
+  color: var(--lab-text);
+  font-weight: 650;
+}
+
+[data-testid="stExpander"] summary:hover {
+  color: #a5f3fc;
+}
+
+/* Apró megjegyzések és lábléc */
+[data-testid="stCaptionContainer"] {
+  color: #8598b1;
+}
+
+.footer-note {
+  margin-top: 2.5rem;
+  padding-top: 1.2rem;
+  border-top: 1px solid rgba(148, 163, 184, 0.14);
+  color: #71839b;
+  font-size: 0.68rem;
+  letter-spacing: 0.13em;
+  line-height: 1.7;
+  text-align: center;
+}
+
+/* Mobilnézet */
+@media (max-width: 700px) {
+  main .block-container {
+    padding: 1.35rem 1rem 2.5rem;
+  }
+
+  .hero {
+    padding: 1.8rem 1.35rem;
+    border-radius: 22px;
+  }
+
+  .hero h1 {
+    font-size: clamp(2.45rem, 11vw, 3.35rem);
+  }
+
+  .hero p {
+    font-size: 0.95rem;
+  }
+
+  .hero-chip {
+    font-size: 0.62rem;
+  }
+
+  [data-testid="stMetric"] {
+    padding: 0.8rem;
+  }
+
+  [data-testid="stMetricValue"] {
+    font-size: 1.3rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
+}
